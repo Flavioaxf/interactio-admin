@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { listenActiveCard, listenResponses, listenSession } from '../../../src/3_firebase';
+import { listenActiveCard, listenResponses, listenSession } from '../../../src/firebase';
 import type { Response, Session } from '../../../src/types';
 
 export default function LiveControlScreen() {
@@ -44,6 +44,13 @@ export default function LiveControlScreen() {
   const activeCard = currentActiveId ? session.cards?.[currentActiveId] : null;
   const totalResponses = Object.keys(responses).length;
 
+  // Função para calcular os votos e porcentagem de cada opção
+  const getOptionStats = (optionId: string) => {
+    const count = Object.values(responses).filter((r) => r.value === optionId).length;
+    const percentage = totalResponses > 0 ? Math.round((count / totalResponses) * 100) : 0;
+    return { count, percentage };
+  };
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Cabeçalho */}
@@ -60,7 +67,39 @@ export default function LiveControlScreen() {
         <View style={styles.card}>
           <Text style={styles.questionLabel}>PERGUNTA ATUAL</Text>
           <Text style={styles.question}>{activeCard.question}</Text>
-          <Text style={styles.responsesCount}>{totalResponses} {totalResponses === 1 ? 'resposta recebida' : 'respostas recebidas'}</Text>
+          <Text style={styles.responsesCount}>
+            {totalResponses} {totalResponses === 1 ? 'resposta recebida' : 'respostas recebidas'}
+          </Text>
+
+          {/* Mini-Dashboard de Resultados */}
+          {activeCard.options && (
+            <View style={styles.resultsContainer}>
+              {Object.entries(activeCard.options).map(([key, option], index) => {
+                const stats = getOptionStats(key);
+                const letter = String.fromCharCode(65 + index); // A, B, C...
+
+                return (
+                  <View key={key} style={styles.optionRow}>
+                    <View style={styles.optionHeader}>
+                      <Text style={styles.optionName}>{letter} - {option.text}</Text>
+                      <Text style={styles.optionStats}>
+                        {stats.count} ({stats.percentage}%)
+                      </Text>
+                    </View>
+                    {/* Barra de Progresso */}
+                    <View style={styles.progressBarBg}>
+                      <View 
+                        style={[
+                          styles.progressBarFill, 
+                          { width: `${stats.percentage}%` }
+                        ]} 
+                      />
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </View>
       ) : (
         <Text style={styles.noCardText}>Nenhuma pergunta ativa no momento.</Text>
@@ -75,7 +114,7 @@ export default function LiveControlScreen() {
 }
 
 // ─────────────────────────────────────────────
-// Estilos
+// Estilos Atualizados
 // ─────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0f0e17' },
@@ -85,11 +124,21 @@ const styles = StyleSheet.create({
   liveBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(52,211,153,0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(52,211,153,0.2)' },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#34d399', marginRight: 6 },
   liveText: { color: '#34d399', fontWeight: 'bold', fontSize: 12 },
-  card: { backgroundColor: '#1a1927', padding: 20, borderRadius: 16, borderColor: 'rgba(255,255,255,0.07)', borderWidth: 1, marginBottom: 30 },
-  questionLabel: { color: '#5a5872', fontSize: 12, fontWeight: 'bold', marginBottom: 10, letterSpacing: 0.8 },
-  question: { color: '#e8e6f0', fontSize: 22, fontWeight: 'bold', marginBottom: 20 },
+  
+  card: { backgroundColor: '#1a1927', padding: 24, borderRadius: 20, borderColor: 'rgba(255,255,255,0.07)', borderWidth: 1, marginBottom: 30, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8 },
+  questionLabel: { color: '#5a5872', fontSize: 12, fontWeight: 'bold', marginBottom: 12, letterSpacing: 1 },
+  question: { color: '#e8e6f0', fontSize: 24, fontWeight: 'bold', marginBottom: 16, lineHeight: 32 },
   responsesCount: { color: '#34d399', fontSize: 16, fontWeight: 'bold' },
+  
+  resultsContainer: { marginTop: 24, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)', paddingTop: 24 },
+  optionRow: { marginBottom: 18 },
+  optionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  optionName: { color: '#e8e6f0', fontSize: 15, fontWeight: '600', flex: 1, paddingRight: 10 },
+  optionStats: { color: '#a78bfa', fontSize: 14, fontWeight: 'bold' },
+  progressBarBg: { height: 8, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 4, overflow: 'hidden' },
+  progressBarFill: { height: '100%', backgroundColor: '#a78bfa', borderRadius: 4 },
+  
   noCardText: { color: '#8b89a0', textAlign: 'center', marginVertical: 40, fontSize: 16 },
-  btnSecondary: { borderWidth: 1, borderColor: '#a78bfa', borderRadius: 12, padding: 16, alignItems: 'center', borderStyle: 'dashed' },
+  btnSecondary: { borderWidth: 1, borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.05)', borderRadius: 16, padding: 18, alignItems: 'center', borderStyle: 'dashed' },
   btnSecondaryText: { color: '#a78bfa', fontSize: 16, fontWeight: 'bold' }
 });

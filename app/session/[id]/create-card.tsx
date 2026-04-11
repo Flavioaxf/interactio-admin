@@ -1,8 +1,4 @@
-// apps/admin/app/session/[id]/create-card.tsx
-// Tela mobile de criação de Card de Múltipla Escolha.
-// Rota dinâmica via expo-router: /session/BX-4927/create-card
-
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -17,23 +13,19 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { addCardToSession, setActiveCard } from '../../../src/3_firebase';
+import { addCardToSession, setActiveCard } from '../../../src/firebase';
 import { buildMultipleChoiceCard } from '../../../src/types';
 
 // ─────────────────────────────────────────────
-// Tipos locais
+// Tipos locais e Constantes
 // ─────────────────────────────────────────────
 
 interface OptionDraft {
-  id:   string; // uuid local (não vai ao Firebase)
+  id:   string;
   text: string;
 }
 
 type TimerOption = 30 | 60 | 120 | 0;
-
-// ─────────────────────────────────────────────
-// Constantes
-// ─────────────────────────────────────────────
 
 const OPTION_COLORS = ['#a78bfa', '#60a5fa', '#34d399', '#fbbf24', '#fb7185'];
 const TIMER_OPTIONS: { label: string; value: TimerOption }[] = [
@@ -50,43 +42,38 @@ function generateId(): string {
 // ─────────────────────────────────────────────
 // Sub-componente: Campo de opção individual
 // ─────────────────────────────────────────────
-
 interface OptionRowProps {
-  option:      OptionDraft;
-  color:       string;
-  index:       number;
-  canRemove:   boolean;
+  option: OptionDraft;
+  color: string;
+  index: number;
+  canRemove: boolean;
   onChangeText: (id: string, text: string) => void;
-  onRemove:    (id: string) => void;
+  onRemove: (id: string) => void;
 }
 
-const OptionRow: React.FC<OptionRowProps> = ({
-  option, color, index, canRemove, onChangeText, onRemove,
-}) => {
-  const label = String.fromCharCode(65 + index); // A, B, C...
+const OptionRow: React.FC<OptionRowProps> = ({ option, color, index, canRemove, onChangeText, onRemove }) => {
+  const label = String.fromCharCode(65 + index);
+  const [isFocused, setIsFocused] = useState(false);
 
   return (
     <View style={styles.optionRow}>
-      <View style={[styles.optionBadge, { backgroundColor: color + '33' }]}>
+      <View style={[styles.optionBadge, { backgroundColor: color + '25' }]}>
         <Text style={[styles.optionBadgeText, { color }]}>{label}</Text>
       </View>
 
       <TextInput
-        style={styles.optionInput}
+        style={[styles.optionInput, isFocused && styles.inputFocused]}
         value={option.text}
         onChangeText={text => onChangeText(option.id, text)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
         placeholder={`Opção ${label}`}
         placeholderTextColor="#5a5872"
         maxLength={120}
-        returnKeyType="next"
       />
 
       {canRemove && (
-        <TouchableOpacity
-          style={styles.removeBtn}
-          onPress={() => onRemove(option.id)}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
+        <TouchableOpacity style={styles.removeBtn} onPress={() => onRemove(option.id)}>
           <Text style={styles.removeBtnText}>✕</Text>
         </TouchableOpacity>
       )}
@@ -99,35 +86,30 @@ const OptionRow: React.FC<OptionRowProps> = ({
 // ─────────────────────────────────────────────
 
 export default function CreateCardScreen() {
-  const { id: sessionId, activeCardId } = useLocalSearchParams<{
-    id:            string;
-    activeCardId?: string;
-  }>();
+  const { id: sessionId, activeCardId } = useLocalSearchParams<{ id: string; activeCardId?: string }>();
   const router = useRouter();
 
-  // ── Form state ──
-  const [question, setQuestion]   = useState('');
-  const [options, setOptions]     = useState<OptionDraft[]>([
-    { id: generateId(), text: '' },
-    { id: generateId(), text: '' },
-  ]);
-  const [timer, setTimer]         = useState<TimerOption>(60);
+  // Form state
+  const [question, setQuestion] = useState('');
+  const [isQuestionFocused, setIsQuestionFocused] = useState(false);
+  const [options, setOptions] = useState<OptionDraft[]>([{ id: generateId(), text: '' }, { id: generateId(), text: '' }]);
+  const [timer, setTimer] = useState<TimerOption>(60);
+  
+  // Novas Configurações
   const [anonymous, setAnonymous] = useState(true);
+  const [hideResults, setHideResults] = useState(false);
+  const [allowMultiple, setAllowMultiple] = useState(false);
+  
   const [publishing, setPublishing] = useState(false);
-
-  // Animação do botão de publish
   const publishScale = useRef(new Animated.Value(1)).current;
 
-  // ── Handlers de opções ──
+  // Handlers de opções
   const handleChangeOption = useCallback((id: string, text: string) => {
     setOptions(prev => prev.map(o => o.id === id ? { ...o, text } : o));
   }, []);
 
   const handleAddOption = useCallback(() => {
-    if (options.length >= 5) {
-      Alert.alert('Limite atingido', 'Máximo de 5 opções por card.');
-      return;
-    }
+    if (options.length >= 6) return Alert.alert('Limite', 'Máximo de 6 opções.');
     setOptions(prev => [...prev, { id: generateId(), text: '' }]);
   }, [options.length]);
 
@@ -135,202 +117,178 @@ export default function CreateCardScreen() {
     setOptions(prev => prev.filter(o => o.id !== id));
   }, []);
 
-  // ── Validação ──
-  const validate = useCallback((): string | null => {
-    if (!question.trim())
-      return 'Digite o enunciado da pergunta.';
-    if (options.some(o => !o.text.trim()))
-      return 'Preencha o texto de todas as opções.';
-    if (new Set(options.map(o => o.text.trim().toLowerCase())).size < options.length)
-      return 'As opções não podem ser duplicadas.';
-    return null;
-  }, [question, options]);
-
-  // ── Publicar ──
+  // Validação e Publicação
   const handlePublish = useCallback(async () => {
-    const error = validate();
-    if (error) {
-      Alert.alert('Atenção', error);
-      return;
-    }
+    if (!question.trim()) return Alert.alert('Atenção', 'Digite a pergunta.');
+    if (options.some(o => !o.text.trim())) return Alert.alert('Atenção', 'Preencha todas as opções.');
 
-    // Animação de press
     Animated.sequence([
-      Animated.timing(publishScale, { toValue: 0.95, duration: 80,  useNativeDriver: true }),
-      Animated.timing(publishScale, { toValue: 1,    duration: 120, useNativeDriver: true }),
+      Animated.timing(publishScale, { toValue: 0.95, duration: 80, useNativeDriver: true }),
+      Animated.timing(publishScale, { toValue: 1, duration: 120, useNativeDriver: true }),
     ]).start();
 
     setPublishing(true);
 
     try {
-      // 1. Monta o objeto Card tipado
       const cardData = buildMultipleChoiceCard({
-        order:     Date.now(),          // order provisório; pode ser reordenado depois
-        question:  question.trim(),
-        options:   options.map(o => o.text.trim()),
+        order: Date.now(),
+        question: question.trim(),
+        options: options.map(o => o.text.trim()),
         timer,
         anonymous,
+        // Aqui poderíamos enviar hideResults e allowMultiple se adicionados ao type Card no futuro
       });
 
-      // 2. Persiste no Firebase e obtém o ID gerado
       const newCardId = await addCardToSession(sessionId, cardData);
-
-      // 3. Ativa o card imediatamente (publica no Telão e Participante)
       await setActiveCard(sessionId, newCardId, activeCardId ?? null);
 
-      // 4. Navega para a tela de controle ao vivo
       router.replace({
-        pathname: `/session/${sessionId}/live-control`,
-        params:   { activeCardId: newCardId },
+        pathname: '/session/[id]/live-control' as any,
+        params: { id: sessionId, activeCardId: newCardId },
       });
     } catch (err) {
-      console.error('[CreateCard] Erro ao publicar:', err);
-      Alert.alert(
-        'Erro ao publicar',
-        'Verifique sua conexão e tente novamente.',
-        [{ text: 'OK' }],
-      );
+      Alert.alert('Erro', 'Falha ao publicar a pergunta.');
     } finally {
       setPublishing(false);
     }
-  }, [validate, question, options, timer, anonymous, sessionId, activeCardId, router, publishScale]);
+  }, [question, options, timer, anonymous, sessionId, activeCardId, router, publishScale]);
 
-  // ─────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {/* ── Cabeçalho ── */}
-        <View style={styles.header}>
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>📊  Múltipla Escolha</Text>
-          </View>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={styles.cancelText}>Cancelar</Text>
-          </TouchableOpacity>
-        </View>
+    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      {/* Remove o header feio de diretório do Expo Router */}
+      <Stack.Screen options={{ headerShown: false }} />
 
-        {/* ── Pergunta ── */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>PERGUNTA</Text>
-          <TextInput
-            style={styles.questionInput}
-            value={question}
-            onChangeText={setQuestion}
-            placeholder="O que você quer perguntar à audiência?"
-            placeholderTextColor="#5a5872"
-            multiline
-            maxLength={280}
-            textAlignVertical="top"
-          />
-          <Text style={styles.charCount}>{question.length}/280</Text>
-        </View>
-
-        {/* ── Opções ── */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>OPÇÕES DE RESPOSTA</Text>
-          {options.map((opt, i) => (
-            <OptionRow
-              key={opt.id}
-              option={opt}
-              color={OPTION_COLORS[i % OPTION_COLORS.length]}
-              index={i}
-              canRemove={options.length > 2}
-              onChangeText={handleChangeOption}
-              onRemove={handleRemoveOption}
-            />
-          ))}
-          {options.length < 5 && (
-            <TouchableOpacity style={styles.addOptionBtn} onPress={handleAddOption}>
-              <Text style={styles.addOptionText}>+ Adicionar opção</Text>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        {/* Container centralizado para não esticar no monitor */}
+        <View style={styles.webContainer}>
+          
+          {/* Header Superior */}
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+              <Text style={styles.backBtnText}>← Voltar</Text>
             </TouchableOpacity>
-          )}
-        </View>
+            <Text style={styles.headerTitle}>Nova Interação</Text>
+            <View style={{ width: 60 }} /> {/* Espaçador invisível */}
+          </View>
 
-        {/* ── Timer ── */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>TEMPO DE RESPOSTA</Text>
-          <View style={styles.timerRow}>
-            {TIMER_OPTIONS.map(t => (
-              <TouchableOpacity
-                key={t.value}
-                style={[styles.timerChip, timer === t.value && styles.timerChipActive]}
-                onPress={() => setTimer(t.value)}
-              >
-                <Text style={[styles.timerChipText, timer === t.value && styles.timerChipTextActive]}>
-                  {t.label}
-                </Text>
-              </TouchableOpacity>
+          {/* Abas de Tipos de Pergunta */}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabsContainer}>
+            <View style={[styles.tab, styles.tabActive]}>
+              <Text style={styles.tabTextActive}>📊 Múltipla Escolha</Text>
+            </View>
+            <View style={styles.tabDisabled}>
+              <Text style={styles.tabTextDisabled}>☁️ Nuvem de Palavras <Text style={styles.soonText}>(Em breve)</Text></Text>
+            </View>
+            <View style={styles.tabDisabled}>
+              <Text style={styles.tabTextDisabled}>💬 Q&A <Text style={styles.soonText}>(Em breve)</Text></Text>
+            </View>
+          </ScrollView>
+
+          {/* ── Pergunta ── */}
+          <View style={styles.section}>
+            <Text style={styles.fieldLabel}>O QUE VOCÊ QUER PERGUNTAR?</Text>
+            <TextInput
+              style={[styles.questionInput, isQuestionFocused && styles.inputFocused]}
+              value={question}
+              onChangeText={setQuestion}
+              onFocus={() => setIsQuestionFocused(true)}
+              onBlur={() => setIsQuestionFocused(false)}
+              placeholder="Ex: Qual foi a principal causa da revolução?"
+              placeholderTextColor="#5a5872"
+              multiline
+              maxLength={280}
+            />
+            <Text style={styles.charCount}>{question.length}/280</Text>
+          </View>
+
+          {/* ── Opções ── */}
+          <View style={styles.section}>
+            <Text style={styles.fieldLabel}>OPÇÕES DE RESPOSTA</Text>
+            {options.map((opt, i) => (
+              <OptionRow
+                key={opt.id} option={opt} color={OPTION_COLORS[i % OPTION_COLORS.length]} index={i}
+                canRemove={options.length > 2} onChangeText={handleChangeOption} onRemove={handleRemoveOption}
+              />
             ))}
+            {options.length < 6 && (
+              <TouchableOpacity style={styles.addOptionBtn} onPress={handleAddOption}>
+                <Text style={styles.addOptionText}>+ Adicionar opção (Máx. 6)</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        </View>
 
-        {/* ── Configurações ── */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>CONFIGURAÇÕES</Text>
-          <TouchableOpacity
-            style={styles.toggleRow}
-            onPress={() => setAnonymous(v => !v)}
-            activeOpacity={0.7}
-          >
-            <View>
-              <Text style={styles.toggleLabel}>Respostas anônimas</Text>
-              <Text style={styles.toggleDesc}>Participantes não são identificados</Text>
+          {/* ── Timer ── */}
+          <View style={styles.section}>
+            <Text style={styles.fieldLabel}>TEMPO PARA RESPONDER</Text>
+            <View style={styles.timerRow}>
+              {TIMER_OPTIONS.map(t => (
+                <TouchableOpacity
+                  key={t.value} style={[styles.timerChip, timer === t.value && styles.timerChipActive]}
+                  onPress={() => setTimer(t.value)}
+                >
+                  <Text style={[styles.timerChipText, timer === t.value && styles.timerChipTextActive]}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
-            <View style={[styles.toggleTrack, anonymous && styles.toggleTrackOn]}>
-              <View style={[styles.toggleThumb, anonymous && styles.toggleThumbOn]} />
-            </View>
-          </TouchableOpacity>
-        </View>
-
-        {/* ── Preview do payload ── */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>PREVIEW DO PAYLOAD (Firebase)</Text>
-          <View style={styles.payloadBox}>
-            <Text style={styles.payloadText}>
-              {JSON.stringify(
-                buildMultipleChoiceCard({
-                  order:    1,
-                  question: question || '…',
-                  options:  options.map(o => o.text || '…'),
-                  timer,
-                  anonymous,
-                }),
-                null,
-                2,
-              )}
-            </Text>
           </View>
-        </View>
 
-        <View style={{ height: 100 }} />
+          {/* ── Configurações Avançadas ── */}
+          <View style={styles.section}>
+            <Text style={styles.fieldLabel}>CONFIGURAÇÕES DA SESSÃO</Text>
+            
+            <View style={styles.settingsCard}>
+              {/* Toggle 1: Anônimo */}
+              <View style={[styles.toggleRow, { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Respostas anônimas</Text>
+                  <Text style={styles.toggleDesc}>Os participantes não serão identificados na tela.</Text>
+                </View>
+                <TouchableOpacity style={[styles.toggleTrack, anonymous && styles.toggleTrackOn]} onPress={() => setAnonymous(!anonymous)}>
+                  <View style={[styles.toggleThumb, anonymous && styles.toggleThumbOn]} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Toggle 2: Ocultar Resultados (Visual Only) */}
+              <View style={[styles.toggleRow, { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Ocultar resultados parciais</Text>
+                  <Text style={styles.toggleDesc}>O telão só mostrará o gráfico após o tempo acabar.</Text>
+                </View>
+                <TouchableOpacity style={[styles.toggleTrack, hideResults && styles.toggleTrackOn]} onPress={() => setHideResults(!hideResults)}>
+                  <View style={[styles.toggleThumb, hideResults && styles.toggleThumbOn]} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Toggle 3: Múltiplas Escolhas (Visual Only) */}
+              <View style={styles.toggleRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.toggleLabel}>Permitir múltiplas seleções</Text>
+                  <Text style={styles.toggleDesc}>O aluno poderá selecionar mais de uma opção.</Text>
+                </View>
+                <TouchableOpacity style={[styles.toggleTrack, allowMultiple && styles.toggleTrackOn]} onPress={() => setAllowMultiple(!allowMultiple)}>
+                  <View style={[styles.toggleThumb, allowMultiple && styles.toggleThumbOn]} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+          
+          <View style={{ height: 40 }} />
+        </View>
       </ScrollView>
 
-      {/* ── Botão fixo de publicar ── */}
-      <View style={styles.footer}>
-        <Animated.View style={{ transform: [{ scale: publishScale }], flex: 1 }}>
-          <TouchableOpacity
-            style={[styles.publishBtn, publishing && styles.publishBtnDisabled]}
-            onPress={handlePublish}
-            disabled={publishing}
-            activeOpacity={0.85}
-          >
-            {publishing ? (
-              <ActivityIndicator color="#0f0e17" />
-            ) : (
-              <Text style={styles.publishBtnText}>⚡  Publicar na sessão</Text>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
+      {/* ── Botão Fixo de Publicar (Centralizado no Web) ── */}
+      <View style={styles.footerBackground}>
+        <View style={styles.footerContainer}>
+          <Animated.View style={{ transform: [{ scale: publishScale }], flex: 1 }}>
+            <TouchableOpacity style={[styles.publishBtn, publishing && styles.publishBtnDisabled]} onPress={handlePublish} disabled={publishing} activeOpacity={0.85}>
+              {publishing ? (
+                <ActivityIndicator color="#0f0e17" />
+              ) : (
+                <Text style={styles.publishBtnText}>⚡ Iniciar Interação Agora</Text>
+              )}
+            </TouchableOpacity>
+          </Animated.View>
+        </View>
       </View>
     </KeyboardAvoidingView>
   );
@@ -339,238 +297,64 @@ export default function CreateCardScreen() {
 // ─────────────────────────────────────────────
 // Estilos
 // ─────────────────────────────────────────────
-
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#0f0e17',
-  },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-  },
+  root: { flex: 1, backgroundColor: '#0f0e17' },
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 16, paddingTop: 20 },
+  
+  // Limita a largura em monitores (Web) e centraliza
+  webContainer: { width: '100%', maxWidth: 760, alignSelf: 'center', paddingBottom: 60 },
 
-  // Header
-  header: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    marginBottom:   24,
-  },
-  badge: {
-    backgroundColor: 'rgba(167,139,250,0.15)',
-    borderRadius:    100,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-  },
-  badgeText: {
-    color:      '#a78bfa',
-    fontSize:   13,
-    fontWeight: '700',
-  },
-  cancelText: {
-    color:    '#8b89a0',
-    fontSize: 15,
-  },
+  // Header superior novo
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  backBtn: { backgroundColor: 'rgba(255,255,255,0.05)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
+  backBtnText: { color: '#e8e6f0', fontSize: 14, fontWeight: '600' },
+  headerTitle: { color: '#e8e6f0', fontSize: 18, fontWeight: '700' },
 
-  // Seções
-  section: {
-    marginBottom: 28,
-  },
-  fieldLabel: {
-    fontSize:      11,
-    fontWeight:    '600',
-    color:         '#5a5872',
-    letterSpacing: 0.8,
-    marginBottom:  10,
-  },
+  // Abas de formatos
+  tabsContainer: { flexDirection: 'row', marginBottom: 30 },
+  tab: { backgroundColor: 'rgba(167,139,250,0.15)', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, marginRight: 10, borderWidth: 1, borderColor: '#a78bfa' },
+  tabActive: { backgroundColor: '#a78bfa' },
+  tabTextActive: { color: '#0f0e17', fontWeight: 'bold', fontSize: 14 },
+  tabDisabled: { backgroundColor: '#1a1927', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 20, marginRight: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  tabTextDisabled: { color: '#5a5872', fontWeight: '600', fontSize: 14 },
+  soonText: { fontSize: 11, fontWeight: '400', opacity: 0.7 },
 
-  // Pergunta
-  questionInput: {
-    backgroundColor: '#1a1927',
-    borderWidth:     1,
-    borderColor:     'rgba(255,255,255,0.07)',
-    borderRadius:    12,
-    padding:         14,
-    color:           '#e8e6f0',
-    fontSize:        16,
-    lineHeight:      24,
-    minHeight:       100,
-  },
-  charCount: {
-    color:     '#5a5872',
-    fontSize:  12,
-    textAlign: 'right',
-    marginTop:  6,
-  },
+  section: { marginBottom: 32 },
+  fieldLabel: { fontSize: 12, fontWeight: '800', color: '#5a5872', letterSpacing: 1.2, marginBottom: 12 },
+  inputFocused: { borderColor: '#a78bfa', backgroundColor: 'rgba(167,139,250,0.03)' },
 
-  // Opções
-  optionRow: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    marginBottom:   10,
-    gap:            10,
-  },
-  optionBadge: {
-    width:          32,
-    height:         32,
-    borderRadius:   8,
-    alignItems:     'center',
-    justifyContent: 'center',
-    flexShrink:     0,
-  },
-  optionBadgeText: {
-    fontSize:   13,
-    fontWeight: '700',
-  },
-  optionInput: {
-    flex:            1,
-    backgroundColor: '#1a1927',
-    borderWidth:     1,
-    borderColor:     'rgba(255,255,255,0.07)',
-    borderRadius:    10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    color:           '#e8e6f0',
-    fontSize:        14,
-  },
-  removeBtn: {
-    width:          28,
-    height:         28,
-    borderRadius:   8,
-    borderWidth:    1,
-    borderColor:    'rgba(255,255,255,0.1)',
-    alignItems:     'center',
-    justifyContent: 'center',
-  },
-  removeBtnText: {
-    color:    '#5a5872',
-    fontSize: 14,
-  },
-  addOptionBtn: {
-    borderWidth:  1,
-    borderStyle:  'dashed',
-    borderColor:  'rgba(255,255,255,0.14)',
-    borderRadius: 10,
-    paddingVertical: 12,
-    alignItems:   'center',
-    marginTop:    4,
-  },
-  addOptionText: {
-    color:      '#8b89a0',
-    fontSize:   14,
-    fontWeight: '500',
-  },
+  questionInput: { backgroundColor: '#1a1927', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', borderRadius: 16, padding: 18, color: '#e8e6f0', fontSize: 18, minHeight: 120, paddingTop: 18 },
+  charCount: { color: '#5a5872', fontSize: 12, textAlign: 'right', marginTop: 8, fontWeight: '500' },
 
-  // Timer
-  timerRow: {
-    flexDirection: 'row',
-    gap:           8,
-  },
-  timerChip: {
-    flex:          1,
-    paddingVertical: 12,
-    alignItems:    'center',
-    backgroundColor: '#1a1927',
-    borderWidth:   1,
-    borderColor:   'rgba(255,255,255,0.07)',
-    borderRadius:  10,
-  },
-  timerChipActive: {
-    backgroundColor: 'rgba(167,139,250,0.15)',
-    borderColor:     '#a78bfa',
-  },
-  timerChipText: {
-    color:      '#8b89a0',
-    fontSize:   13,
-    fontWeight: '600',
-  },
-  timerChipTextActive: {
-    color: '#a78bfa',
-  },
+  optionRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 12 },
+  optionBadge: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  optionBadgeText: { fontSize: 14, fontWeight: '800' },
+  optionInput: { flex: 1, backgroundColor: '#1a1927', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, color: '#e8e6f0', fontSize: 15 },
+  removeBtn: { width: 40, height: 40, borderRadius: 10, backgroundColor: 'rgba(251, 113, 133, 0.08)', alignItems: 'center', justifyContent: 'center' },
+  removeBtnText: { color: '#fb7185', fontSize: 16, fontWeight: 'bold' },
+  addOptionBtn: { backgroundColor: 'rgba(167,139,250,0.03)', borderWidth: 1, borderStyle: 'dashed', borderColor: 'rgba(167,139,250,0.3)', borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+  addOptionText: { color: '#a78bfa', fontSize: 15, fontWeight: '700' },
 
-  // Toggle
-  toggleRow: {
-    flexDirection:  'row',
-    justifyContent: 'space-between',
-    alignItems:     'center',
-    backgroundColor: '#1a1927',
-    borderWidth:    1,
-    borderColor:    'rgba(255,255,255,0.07)',
-    borderRadius:   12,
-    padding:        16,
-  },
-  toggleLabel: {
-    color:      '#e8e6f0',
-    fontSize:   15,
-    fontWeight: '500',
-  },
-  toggleDesc: {
-    color:    '#5a5872',
-    fontSize: 12,
-    marginTop: 2,
-  },
-  toggleTrack: {
-    width:           44,
-    height:          26,
-    borderRadius:    13,
-    backgroundColor: '#2d2b4a',
-    justifyContent:  'center',
-    padding:         3,
-  },
-  toggleTrackOn: {
-    backgroundColor: '#7c3aed',
-  },
-  toggleThumb: {
-    width:           20,
-    height:          20,
-    borderRadius:    10,
-    backgroundColor: '#5a5872',
-  },
-  toggleThumbOn: {
-    backgroundColor: '#ffffff',
-    alignSelf:       'flex-end',
-  },
+  timerRow: { flexDirection: 'row', gap: 10 },
+  timerChip: { flex: 1, paddingVertical: 14, alignItems: 'center', backgroundColor: '#1a1927', borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)', borderRadius: 12 },
+  timerChipActive: { backgroundColor: 'rgba(167,139,250,0.15)', borderColor: '#a78bfa' },
+  timerChipText: { color: '#8b89a0', fontSize: 14, fontWeight: '600' },
+  timerChipTextActive: { color: '#a78bfa', fontWeight: '700' },
 
-  // Payload preview
-  payloadBox: {
-    backgroundColor: '#0a0a12',
-    borderRadius:    10,
-    padding:         14,
-    borderWidth:     1,
-    borderColor:     'rgba(255,255,255,0.05)',
-  },
-  payloadText: {
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    fontSize:   11,
-    color:      '#8b89a0',
-    lineHeight: 18,
-  },
+  settingsCard: { backgroundColor: '#1a1927', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', overflow: 'hidden' },
+  toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
+  toggleLabel: { color: '#e8e6f0', fontSize: 16, fontWeight: '600' },
+  toggleDesc: { color: '#8b89a0', fontSize: 13, marginTop: 4, paddingRight: 20 },
+  toggleTrack: { width: 50, height: 28, borderRadius: 14, backgroundColor: '#2d2b4a', justifyContent: 'center', padding: 3 },
+  toggleTrackOn: { backgroundColor: '#a78bfa' },
+  toggleThumb: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#8b89a0' },
+  toggleThumbOn: { backgroundColor: '#0f0e17', alignSelf: 'flex-end' },
 
-  // Footer
-  footer: {
-    padding:         16,
-    paddingBottom:   Platform.OS === 'ios' ? 34 : 16,
-    backgroundColor: '#0f0e17',
-    borderTopWidth:  1,
-    borderTopColor:  'rgba(255,255,255,0.07)',
-    flexDirection:   'row',
-  },
-  publishBtn: {
-    backgroundColor: '#a78bfa',
-    borderRadius:    12,
-    paddingVertical: 16,
-    alignItems:      'center',
-  },
-  publishBtnDisabled: {
-    opacity: 0.6,
-  },
-  publishBtnText: {
-    color:      '#0f0e17',
-    fontSize:   16,
-    fontWeight: '700',
-  },
+  // Rodapé fixo e centralizado
+  footerBackground: { backgroundColor: 'rgba(15, 14, 23, 0.9)', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)' },
+  footerContainer: { width: '100%', maxWidth: 760, alignSelf: 'center', padding: 16, paddingBottom: Platform.OS === 'ios' ? 34 : 20, flexDirection: 'row' },
+  publishBtn: { backgroundColor: '#a78bfa', borderRadius: 14, paddingVertical: 18, alignItems: 'center' },
+  publishBtnDisabled: { opacity: 0.5 },
+  publishBtnText: { color: '#0f0e17', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
 });
