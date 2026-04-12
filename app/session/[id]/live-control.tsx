@@ -7,10 +7,11 @@ import {
   Dimensions, 
   Animated, 
   ActivityIndicator,
-  TouchableOpacity
+  TouchableOpacity,
+  Platform,
+  Modal
 } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
-// ── ADICIONAMOS O 'update' AQUI ──
 import { getDatabase, ref, onValue, update } from 'firebase/database';
 import { Ionicons } from '@expo/vector-icons';
 import '../../../src/firebase'; 
@@ -69,7 +70,6 @@ function NetworkBackground() {
     <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
       <View style={[styles.bgGlow, { top: -200, left: -200, backgroundColor: 'rgba(167, 139, 250, 0.1)' }]} />
       <View style={[styles.bgGlow, { bottom: -200, right: -200, backgroundColor: 'rgba(56, 189, 248, 0.05)' }]} />
-      
       <Svg height="100%" width="100%">
         {lines}
         {particles.map((p, i) => (
@@ -88,7 +88,8 @@ export default function LiveControlScreen() {
   const [errorMessage, setErrorMessage] = useState('');
   const [sessionData, setSessionData] = useState<any>(null);
   const [votes, setVotes] = useState<{ [key: string]: number }>({});
-  const [totalVotes, setTotalVotes] = useState(0);
+  const [totalParticipants, setTotalParticipants] = useState(0);
+  const [showQR, setShowQR] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -100,24 +101,29 @@ export default function LiveControlScreen() {
       const data = snapshot.val();
       if (data) {
         setSessionData(data);
-        
-        // Agora pegamos o índice atual de forma segura
         const currentIndex = typeof data.currentInteraction === 'number' ? data.currentInteraction : 0;
+        const currentInteraction = data.interactions?.[currentIndex];
+        const isWordCloud = currentInteraction?.type === 'word_cloud';
         
-        // Pega as respostas APENAS do slide atual
         const responses = data.responses ? data.responses[currentIndex] : {};
         const counts: { [key: string]: number } = {};
-        let total = 0;
+        let participantsCount = 0;
         
         if (responses) {
           Object.values(responses).forEach((val: any) => { 
-            counts[val] = (counts[val] || 0) + 1; 
-            total++; 
+            participantsCount++;
+            if (isWordCloud && Array.isArray(val)) {
+              val.forEach(word => {
+                counts[word] = (counts[word] || 0) + 1;
+              });
+            } else if (!isWordCloud) {
+              counts[val] = (counts[val] || 0) + 1; 
+            }
           });
         }
         
         setVotes(counts);
-        setTotalVotes(total);
+        setTotalParticipants(participantsCount);
       } else {
         setErrorMessage("Sessão não encontrada no banco de dados.");
       }
@@ -129,38 +135,45 @@ export default function LiveControlScreen() {
     return () => unsubscribe();
   }, [id]);
 
-  // ── LÓGICA DO CONTROLE REMOTO ──
   const changeSlide = async (direction: 'next' | 'prev') => {
     if (!sessionData || !sessionData.interactions) return;
-    
     const currentIndex = typeof sessionData.currentInteraction === 'number' ? sessionData.currentInteraction : 0;
     const totalSlides = sessionData.interactions.length;
-    
     let newIndex = currentIndex;
     
-    if (direction === 'next' && currentIndex < totalSlides - 1) {
-      newIndex = currentIndex + 1;
-    } else if (direction === 'prev' && currentIndex > 0) {
-      newIndex = currentIndex - 1;
-    } else {
-      return; // Não faz nada se já estiver no limite
-    }
+    if (direction === 'next' && currentIndex < totalSlides - 1) newIndex = currentIndex + 1;
+    else if (direction === 'prev' && currentIndex > 0) newIndex = currentIndex - 1;
+    else return;
 
     const db = getDatabase();
     const sessionId = typeof id === 'string' ? id : id[0];
-    
-    // Atualiza o Firebase. Como os alunos estão "ouvindo", a tela deles muda na hora!
-    await update(ref(db, `sessions/${sessionId}`), {
-      currentInteraction: newIndex
-    });
+    await update(ref(db, `sessions/${sessionId}`), { currentInteraction: newIndex });
   };
 
   if (loading || errorMessage) return <LoadingOrError loading={loading} errorMessage={errorMessage} router={router} />;
 
-  // Descobre qual é o slide atual e quantos slides existem no total
   const currentIndex = typeof sessionData?.currentInteraction === 'number' ? sessionData.currentInteraction : 0;
   const currentInteraction = sessionData?.interactions?.[currentIndex];
   const totalSlides = sessionData?.interactions?.length || 1;
+
+  const wordCloudArray = Object.entries(votes)
+    .map(([text, count]) => ({ text, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const maxWordCount = wordCloudArray.length > 0 ? wordCloudArray[0].count : 1;
+  
+  const interleavedCloud: typeof wordCloudArray = [];
+  let left = 0;
+  let right = wordCloudArray.length - 1;
+  while(left <= right) {
+      if(left === right) { interleavedCloud.push(wordCloudArray[left]); break; }
+      interleavedCloud.push(wordCloudArray[left]);
+      interleavedCloud.push(wordCloudArray[right]);
+      left++;
+      right--;
+  }
+
+  const cloudColors = ['#f472b6', '#38bdf8', '#34d399', '#a78bfa', '#fbbf24', '#e8e6f0'];
 
   return (
     <View style={styles.root}>
@@ -180,6 +193,13 @@ export default function LiveControlScreen() {
           <View style={styles.pinBadge}>
             <Text style={styles.pinText}>{id}</Text>
           </View>
+          <TouchableOpacity 
+            style={styles.qrTriggerButton} 
+            onPress={() => setShowQR(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="qr-code" size={20} color="#0f0e17" />
+          </TouchableOpacity>
         </View>
 
         <View style={styles.statsCard}>
@@ -188,52 +208,86 @@ export default function LiveControlScreen() {
           </View>
           <View>
             <Text style={styles.statsLabel}>PARTICIPANTES</Text>
-            <Text style={styles.statsText}>{totalVotes}</Text>
+            <Text style={styles.statsText}>{totalParticipants}</Text>
           </View>
         </View>
       </View>
 
       <View style={styles.mainContainer}>
-        <View style={styles.contentLeft}>
-          <Text style={styles.questionTitle}>
-            {currentInteraction?.question || "Aguardando próxima pergunta..."}
-          </Text>
-          
-          <View style={styles.chartContainer}>
-            {currentInteraction?.type === 'multiple_choice' && currentInteraction?.options?.map((option: string, index: number) => {
-              const count = votes[index] || 0;
-              const percentage = totalVotes > 0 ? (count / totalVotes) : 0;
-              
-              return (
-                <View key={index} style={styles.barWrapper}>
-                  <View style={styles.barLabelGroup}>
-                    <Text style={styles.barOptionText}>{option}</Text>
-                    <Text style={styles.barCountText}>{count} <Text style={styles.barPercentText}>({(percentage * 100).toFixed(0)}%)</Text></Text>
+        <Text style={styles.questionTitle}>
+          {currentInteraction?.question || "Aguardando próxima pergunta..."}
+        </Text>
+        
+        <View style={styles.interactionWrapper}>
+          {currentInteraction?.type === 'multiple_choice' && (
+            <View style={styles.barsContainer}>
+              {currentInteraction?.options?.map((option: string, index: number) => {
+                const count = votes[index] || 0;
+                const percentage = totalParticipants > 0 ? (count / totalParticipants) : 0;
+                return (
+                  <View key={index} style={styles.barWrapper}>
+                    <View style={styles.barLabelGroup}>
+                      <Text style={styles.barOptionText}>{option}</Text>
+                      <Text style={styles.barCountText}>{count} <Text style={styles.barPercentText}>({(percentage * 100).toFixed(0)}%)</Text></Text>
+                    </View>
+                    <View style={styles.barTrack}>
+                      <AnimatedBar percentage={percentage} />
+                    </View>
                   </View>
-                  <View style={styles.barTrack}>
-                    <AnimatedBar percentage={percentage} />
-                  </View>
-                </View>
-              );
-            })}
-            
-            {/* Aviso se for um slide diferente de múltipla escolha (temporário) */}
-            {currentInteraction?.type !== 'multiple_choice' && (
-              <View style={styles.comingSoonBox}>
-                <Ionicons name="construct-outline" size={48} color="#8b89a0" />
-                <Text style={styles.comingSoonText}>Modo {currentInteraction?.type} em desenvolvimento...</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.qrSide}>
-          <View style={styles.qrGlassCard}>
-            <View style={styles.qrInnerBorder}>
-              <Ionicons name="qr-code" size={160} color="#e8e6f0" />
+                );
+              })}
             </View>
-            <Text style={styles.qrDesc}>Aponte a câmera para votar</Text>
-          </View>
+          )}
+
+          {currentInteraction?.type === 'word_cloud' && (
+            <View style={styles.cloudWrapper}>
+              {interleavedCloud.length === 0 ? (
+                <View style={styles.waitingCloud}>
+                  <Ionicons name="cloud-outline" size={80} color="rgba(244, 114, 182, 0.2)" />
+                  <Text style={styles.waitingCloudText}>Aguardando as primeiras palavras...</Text>
+                </View>
+              ) : (
+                <View style={styles.cloudFlexContainer}>
+                  {interleavedCloud.map((wordObj, index) => {
+                    const minFont = 24;
+                    const maxFont = 130; 
+                    const fontSize = maxWordCount === 1 
+                      ? 50 
+                      : minFont + ((wordObj.count - 1) / (maxWordCount - 1)) * (maxFont - minFont);
+                    
+                    const color = cloudColors[index % cloudColors.length];
+                    const isVertical = (index % 4 === 0) && fontSize < 60;
+
+                    return (
+                      <Text 
+                        key={wordObj.text} 
+                        style={[
+                          styles.cloudWord, 
+                          { 
+                            fontSize, 
+                            color,
+                            transform: [{ rotate: isVertical ? '-90deg' : '0deg' }],
+                            marginHorizontal: isVertical ? -10 : 12,
+                            marginVertical: isVertical ? 20 : 4,
+                            textShadowColor: wordObj.count === maxWordCount ? color : 'transparent',
+                          }
+                        ]}
+                      >
+                        {wordObj.text.toLowerCase()}
+                      </Text>
+                    );
+                  })}
+                </View>
+              )}
+            </View>
+          )}
+          
+          {currentInteraction?.type === 'q_and_a' && (
+            <View style={styles.comingSoonBox}>
+              <Ionicons name="construct-outline" size={48} color="#8b89a0" />
+              <Text style={styles.comingSoonText}>Modo Q&A em desenvolvimento...</Text>
+            </View>
+          )}
         </View>
       </View>
 
@@ -241,29 +295,32 @@ export default function LiveControlScreen() {
         <Text style={styles.footerBrand}>Interactio OS • Transmissão ao Vivo</Text>
       </View>
 
-      {/* ── BARRA FLUTUANTE DE CONTROLE DE SLIDES ── */}
       {totalSlides > 1 && (
         <View style={styles.slideControls}>
-          <TouchableOpacity 
-            style={[styles.controlButton, currentIndex === 0 && styles.controlButtonDisabled]} 
-            onPress={() => changeSlide('prev')}
-            disabled={currentIndex === 0}
-          >
+          <TouchableOpacity style={[styles.controlButton, currentIndex === 0 && styles.controlButtonDisabled]} onPress={() => changeSlide('prev')} disabled={currentIndex === 0}>
             <Ionicons name="chevron-back" size={28} color={currentIndex === 0 ? '#5a5872' : '#e8e6f0'} />
           </TouchableOpacity>
-          
-          <View style={styles.slideIndicator}>
-            <Text style={styles.slideIndicatorText}>Slide {currentIndex + 1} de {totalSlides}</Text>
-          </View>
-
-          <TouchableOpacity 
-            style={[styles.controlButton, currentIndex === totalSlides - 1 && styles.controlButtonDisabled]} 
-            onPress={() => changeSlide('next')}
-            disabled={currentIndex === totalSlides - 1}
-          >
+          <View style={styles.slideIndicator}><Text style={styles.slideIndicatorText}>Slide {currentIndex + 1} de {totalSlides}</Text></View>
+          <TouchableOpacity style={[styles.controlButton, currentIndex === totalSlides - 1 && styles.controlButtonDisabled]} onPress={() => changeSlide('next')} disabled={currentIndex === totalSlides - 1}>
             <Ionicons name="chevron-forward" size={28} color={currentIndex === totalSlides - 1 ? '#5a5872' : '#e8e6f0'} />
           </TouchableOpacity>
         </View>
+      )}
+
+      {showQR && (
+        <TouchableOpacity 
+          style={styles.qrOverlay} 
+          activeOpacity={1} 
+          onPress={() => setShowQR(false)}
+        >
+          <View style={styles.qrModalCard}>
+            <View style={styles.qrModalInnerBorder}>
+              <Ionicons name="qr-code" size={320} color="#e8e6f0" />
+            </View>
+            <Text style={styles.qrModalDesc}>Aponte a câmera do seu celular</Text>
+            <Text style={styles.qrModalHint}>Toque em qualquer lugar para fechar</Text>
+          </View>
+        </TouchableOpacity>
       )}
 
     </View>
@@ -286,12 +343,7 @@ function AnimatedBar({ percentage }: { percentage: number }) {
     <Animated.View 
       style={[
         styles.barFill, 
-        { 
-          width: widthAnim.interpolate({
-            inputRange: [0, 100],
-            outputRange: ['0%', '100%']
-          }) 
-        }
+        { width: widthAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }
       ]} 
     />
   );
@@ -305,15 +357,9 @@ function LoadingOrError({ loading, errorMessage, router }: { loading: boolean, e
         <Ionicons name="arrow-back" size={24} color="#e8e6f0" />
       </TouchableOpacity>
       {loading ? (
-        <>
-          <ActivityIndicator size="large" color="#a78bfa" />
-          <Text style={styles.loadingText}>Preparando o palco...</Text>
-        </>
+        <><ActivityIndicator size="large" color="#a78bfa" /><Text style={styles.loadingText}>Preparando o palco...</Text></>
       ) : (
-        <>
-          <Ionicons name="warning-outline" size={64} color="#ef4444" />
-          <Text style={[styles.loadingText, { color: '#ef4444', marginTop: 16 }]}>{errorMessage}</Text>
-        </>
+        <><Ionicons name="warning-outline" size={64} color="#ef4444" /><Text style={[styles.loadingText, { color: '#ef4444', marginTop: 16 }]}>{errorMessage}</Text></>
       )}
     </View>
   );
@@ -325,8 +371,7 @@ const styles = StyleSheet.create({
   loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' },
   loadingText: { color: '#8b89a0', marginTop: 24, fontSize: 20, fontWeight: '600' },
   backButtonAbsolute: { position: 'absolute', top: 40, left: 40, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
-
-  topBar: { height: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 60, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 14, 23, 0.6)', backdropFilter: 'blur(10px)' as any },
+  topBar: { height: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 60, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 14, 23, 0.6)', backdropFilter: 'blur(10px)' as any, zIndex: 50 },
   topLeftGroup: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   backButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
   logoText: { fontSize: 36, fontWeight: '800', color: '#e8e6f0', letterSpacing: -1 },
@@ -336,15 +381,15 @@ const styles = StyleSheet.create({
   whiteText: { color: '#fff', fontWeight: '700' },
   pinBadge: { backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 8, borderRadius: 100, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 },
   pinText: { color: '#0f0e17', fontSize: 28, fontWeight: '900', letterSpacing: 2 },
+  qrTriggerButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#e8e6f0', justifyContent: 'center', alignItems: 'center', marginLeft: 12, shadowColor: '#fff', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.2, shadowRadius: 10 },
   statsCard: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, paddingRight: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   statsIconBox: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(167, 139, 250, 0.15)', justifyContent: 'center', alignItems: 'center' },
   statsLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   statsText: { color: '#e8e6f0', fontSize: 24, fontWeight: '800', lineHeight: 28 },
-
-  mainContainer: { flex: 1, flexDirection: 'row', paddingHorizontal: 60, paddingTop: 60, gap: 100, zIndex: 10 },
-  contentLeft: { flex: 1.5, justifyContent: 'center', paddingBottom: 60 },
-  questionTitle: { color: '#e8e6f0', fontSize: 56, fontWeight: '900', marginBottom: 60, lineHeight: 64, letterSpacing: -1 },
-  chartContainer: { gap: 40 },
+  mainContainer: { flex: 1, paddingHorizontal: 80, paddingTop: 60, paddingBottom: 120, zIndex: 10 },
+  questionTitle: { color: '#e8e6f0', fontSize: 56, fontWeight: '900', marginBottom: 20, lineHeight: 64, letterSpacing: -1, textAlign: 'center' },
+  interactionWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', width: '100%' },
+  barsContainer: { width: '100%', maxWidth: 1000, gap: 40 },
   barWrapper: { width: '100%' },
   barLabelGroup: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, alignItems: 'flex-end' },
   barOptionText: { color: '#e8e6f0', fontSize: 24, fontWeight: '700' },
@@ -352,56 +397,23 @@ const styles = StyleSheet.create({
   barPercentText: { color: '#8b89a0', fontSize: 18, fontWeight: '600' },
   barTrack: { height: 32, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)' },
   barFill: { height: '100%', backgroundColor: '#a78bfa', borderRadius: 16, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 15 },
-  
+  cloudWrapper: { flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' },
+  waitingCloud: { alignItems: 'center', padding: 60, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  waitingCloudText: { color: '#8b89a0', fontSize: 24, fontWeight: '600', marginTop: 24 },
+  cloudFlexContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', alignContent: 'center', maxWidth: 1400 },
+  cloudWord: { fontWeight: '900', letterSpacing: -2, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 30 },
   comingSoonBox: { alignItems: 'center', padding: 40, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   comingSoonText: { color: '#8b89a0', fontSize: 20, fontWeight: '600', marginTop: 16 },
-
-  qrSide: { flex: 0.8, alignItems: 'center', justifyContent: 'center', paddingBottom: 60 },
-  qrGlassCard: { backgroundColor: 'rgba(26, 25, 36, 0.6)', padding: 32, borderRadius: 40, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 30 }, shadowOpacity: 0.5, shadowRadius: 40, backdropFilter: 'blur(20px)' as any },
-  qrInnerBorder: { padding: 24, backgroundColor: '#0f0e17', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 24 },
-  qrDesc: { color: '#8b89a0', fontSize: 18, fontWeight: '600', letterSpacing: 0.5 },
-
-  footer: { height: 60, justifyContent: 'center', alignItems: 'center' },
+  footer: { height: 60, justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, width: '100%' },
   footerBrand: { color: '#5a5872', fontSize: 14, fontWeight: '600', letterSpacing: 1 },
-
-  // ── ESTILOS DA BARRA DE CONTROLE FLUTUANTE ──
-  slideControls: {
-    position: 'absolute',
-    bottom: 40,
-    alignSelf: 'center',
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(26, 25, 36, 0.8)',
-    borderRadius: 100,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(167, 139, 250, 0.3)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 20,
-    backdropFilter: 'blur(15px)' as any,
-    zIndex: 100,
-  },
-  controlButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  controlButtonDisabled: {
-    backgroundColor: 'transparent',
-    opacity: 0.5,
-  },
-  slideIndicator: {
-    paddingHorizontal: 24,
-  },
-  slideIndicatorText: {
-    color: '#e8e6f0',
-    fontSize: 18,
-    fontWeight: '800',
-    letterSpacing: 1,
-  }
+  slideControls: { position: 'absolute', bottom: 40, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 100, padding: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20, backdropFilter: 'blur(15px)' as any, zIndex: 100 },
+  controlButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+  controlButtonDisabled: { backgroundColor: 'transparent', opacity: 0.5 },
+  slideIndicator: { paddingHorizontal: 24 },
+  slideIndicatorText: { color: '#e8e6f0', fontSize: 18, fontWeight: '800', letterSpacing: 1 },
+  qrOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 14, 23, 0.90)', justifyContent: 'center', alignItems: 'center', zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(20px)' } as any) },
+  qrModalCard: { backgroundColor: 'rgba(26, 25, 36, 0.8)', padding: 48, borderRadius: 48, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', alignItems: 'center', shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.15, shadowRadius: 50 },
+  qrModalInnerBorder: { padding: 32, backgroundColor: '#0f0e17', borderRadius: 32, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 32 },
+  qrModalDesc: { color: '#e8e6f0', fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 },
+  qrModalHint: { color: '#8b89a0', fontSize: 16, fontWeight: '600' }
 });
