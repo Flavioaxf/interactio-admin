@@ -8,8 +8,7 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Platform, 
-  ActivityIndicator,
-  Animated
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons'; 
 import { getDatabase, ref, update, get } from 'firebase/database';
@@ -33,15 +32,14 @@ export default function StudioScreen() {
   const [slides, setSlides] = useState<Slide[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   
-  // Guardamos o índice original caso a sessão já estivesse ativa
   const [liveIndex, setLiveIndex] = useState(0);
   const [isLive, setIsLive] = useState(false);
 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{message: string, type: 'error' | 'success'} | null>(null);
 
-  const showError = (message: string) => {
-    setErrorMessage(message);
-    setTimeout(() => setErrorMessage(null), 3500);
+  const showToast = (message: string, type: 'error' | 'success' = 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3500);
   };
 
   useEffect(() => {
@@ -65,7 +63,7 @@ export default function StudioScreen() {
           }]);
         }
       } catch (err) {
-        showError("Erro ao carregar dados da sessão.");
+        showToast("Erro ao carregar dados da sessão.");
       } finally {
         setLoading(false);
       }
@@ -74,7 +72,7 @@ export default function StudioScreen() {
   }, [sessionId]);
 
   const addNewSlide = () => {
-    if (slides.length >= 15) return showError("Limite máximo de 15 slides atingido.");
+    if (slides.length >= 15) return showToast("Limite máximo de 15 slides atingido.");
     const newSlide: Slide = {
       id: `slide_${Date.now()}`,
       type: 'multiple_choice',
@@ -87,7 +85,7 @@ export default function StudioScreen() {
   };
 
   const removeSlide = (indexToRemove: number) => {
-    if (slides.length === 1) return showError("A sessão precisa de ter pelo menos um slide.");
+    if (slides.length === 1) return showToast("A sessão precisa de ter pelo menos um slide.");
     const newSlides = slides.filter((_, index) => index !== indexToRemove);
     setSlides(newSlides);
     if (activeIndex >= newSlides.length) setActiveIndex(newSlides.length - 1);
@@ -107,12 +105,11 @@ export default function StudioScreen() {
 
   const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
 
-  const handleSaveAndPresent = async () => {
-    // Validação básica: todos os slides precisam de pergunta
+  const handleSaveOnly = async () => {
     const emptySlideIndex = slides.findIndex(s => s.question.trim() === '');
     if (emptySlideIndex !== -1) {
       setActiveIndex(emptySlideIndex);
-      return showError(`O Slide ${emptySlideIndex + 1} está sem pergunta.`);
+      return showToast(`O Slide ${emptySlideIndex + 1} está sem pergunta.`);
     }
 
     setIsSaving(true);
@@ -126,16 +123,47 @@ export default function StudioScreen() {
 
       await update(ref(db, `sessions/${sessionId}`), {
         interactions: cleanSlides,
-        // Se já estava ao vivo, mantém o slide atual. Se é nova, começa do 0.
+        status: isLive ? 'active' : 'draft',
+        updatedAt: Date.now()
+      });
+
+      showToast("Apresentação salva com sucesso! ✓", 'success');
+    } catch (error) {
+      showToast("Erro ao salvar. Verifique sua conexão.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveAndPresent = async () => {
+    const emptySlideIndex = slides.findIndex(s => s.question.trim() === '');
+    if (emptySlideIndex !== -1) {
+      setActiveIndex(emptySlideIndex);
+      return showToast(`O Slide ${emptySlideIndex + 1} está sem pergunta.`);
+    }
+
+    setIsSaving(true);
+    try {
+      const db = getDatabase();
+      const cleanSlides = slides.map(slide => ({
+        ...slide,
+        options: slide.type === 'multiple_choice' ? slide.options.filter(opt => opt.trim() !== '') : [],
+        limit: slide.type === 'word_cloud' ? (slide.limit || 3) : 1
+      }));
+
+      await update(ref(db, `sessions/${sessionId}`), {
+        interactions: cleanSlides,
         currentInteraction: isLive ? liveIndex : 0,
         status: 'active'
       });
 
-      // Forçamos a navegação usando o caminho completo para evitar travas do router
+      // Aqui está a correção: Desligamos o loading ANTES de redirecionar.
+      // Assim, se você voltar pelo botão do navegador, o botão estará liberado!
+      setIsSaving(false);
       router.push(`/session/${sessionId}/live-control` as any);
       
     } catch (error) {
-      showError("Erro ao salvar. Verifique sua conexão.");
+      showToast("Erro ao salvar. Verifique sua conexão.");
       setIsSaving(false);
     }
   };
@@ -153,10 +181,12 @@ export default function StudioScreen() {
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      {errorMessage && (
-        <View style={styles.toastContainer}>
-          <View style={styles.toastIconBox}><Ionicons name="warning" size={20} color="#ef4444" /></View>
-          <Text style={styles.toastText}>{errorMessage}</Text>
+      {toast && (
+        <View style={[styles.toastContainer, { borderColor: toast.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(52, 211, 153, 0.3)' }]}>
+          <View style={[styles.toastIconBox, { backgroundColor: toast.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(52, 211, 153, 0.1)' }]}>
+            <Ionicons name={toast.type === 'error' ? "warning" : "checkmark-circle"} size={20} color={toast.type === 'error' ? "#ef4444" : "#34d399"} />
+          </View>
+          <Text style={styles.toastText}>{toast.message}</Text>
         </View>
       )}
 
@@ -172,16 +202,23 @@ export default function StudioScreen() {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.presentButton} onPress={handleSaveAndPresent} disabled={isSaving} activeOpacity={0.8}>
-          {isSaving ? <ActivityIndicator color="#0f0e17" /> : (
-            <>
-              <Ionicons name={isLive ? "refresh" : "play"} size={18} color="#0f0e17" />
-              <Text style={styles.presentButtonText}>
-                {isLive ? "Atualizar e Voltar" : "Salvar e Apresentar"}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <View style={styles.actionButtonsGroup}>
+          <TouchableOpacity style={styles.saveButton} onPress={handleSaveOnly} disabled={isSaving} activeOpacity={0.7}>
+            <Ionicons name="save-outline" size={18} color="#e8e6f0" />
+            <Text style={styles.saveButtonText}>Salvar Rascunho</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.presentButton} onPress={handleSaveAndPresent} disabled={isSaving} activeOpacity={0.8}>
+            {isSaving ? <ActivityIndicator color="#0f0e17" /> : (
+              <>
+                <Ionicons name={isLive ? "refresh" : "play"} size={18} color="#0f0e17" />
+                <Text style={styles.presentButtonText}>
+                  {isLive ? "Atualizar e Voltar" : "Salvar e Apresentar"}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.workspace}>
@@ -297,7 +334,8 @@ export default function StudioScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0f0e17' }, loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' },
-  topBar: { height: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 10 }, topLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 }, backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, headerTitle: { color: '#e8e6f0', fontSize: 20, fontWeight: '800' }, highlightText: { color: '#a78bfa' }, sessionCodeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(167, 139, 250, 0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)', marginLeft: 8 }, sessionCodeLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }, sessionCodeText: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1 }, presentButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, presentButtonText: { color: '#0f0e17', fontWeight: '800', fontSize: 15 },
+  topBar: { height: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 10 }, topLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 }, backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, headerTitle: { color: '#e8e6f0', fontSize: 20, fontWeight: '800' }, highlightText: { color: '#a78bfa' }, sessionCodeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(167, 139, 250, 0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)', marginLeft: 8 }, sessionCodeLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }, sessionCodeText: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1 }, 
+  actionButtonsGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 }, saveButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }, saveButtonText: { color: '#e8e6f0', fontWeight: '700', fontSize: 15 }, presentButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, presentButtonText: { color: '#0f0e17', fontWeight: '800', fontSize: 15 },
   workspace: { flex: 1, flexDirection: 'row' }, sidebar: { width: 300, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 5 }, slideThumbnail: { backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, slideThumbnailActive: { borderColor: 'rgba(167, 139, 250, 0.4)', backgroundColor: 'rgba(167, 139, 250, 0.05)' }, slideHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }, slideNumber: { color: '#8b89a0', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' }, slideNumberActive: { color: '#a78bfa' }, slidePreview: { flexDirection: 'row', alignItems: 'center', gap: 12 }, slidePreviewText: { flex: 1, color: '#e8e6f0', fontSize: 13, fontWeight: '600', lineHeight: 18 }, addSlideButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed' }, addSlideText: { color: '#a78bfa', fontWeight: '700' },
   editorArea: { flex: 1, backgroundColor: '#0f0e17', position: 'relative', overflow: 'hidden' }, bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(120px)' as any, opacity: 0.8 }, editorScroll: { padding: 40, alignItems: 'center', flexGrow: 1, justifyContent: 'center' }, card: { width: '100%', maxWidth: 800, backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.4, shadowRadius: 30, backdropFilter: 'blur(20px)' as any },
   tabsContainer: { flexDirection: 'row', gap: 12, marginBottom: 40, flexWrap: 'wrap' }, tab: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, tabActiveMultipleChoice: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(56, 189, 248, 0.3)' }, tabActiveWordCloud: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(244, 114, 182, 0.3)' }, tabActiveQA: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(52, 211, 153, 0.3)' }, iconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }, tabText: { color: '#8b89a0', fontWeight: '700', fontSize: 14 }, 
@@ -305,5 +343,5 @@ const styles = StyleSheet.create({
   optionRow: { flexDirection: 'row', marginBottom: 12 }, optionLetterBox: { backgroundColor: 'rgba(167, 139, 250, 0.1)', width: 56, height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.15)' }, optionLetterText: { color: '#a78bfa', fontSize: 18, fontWeight: '800' }, optionInput: { flex: 1, backgroundColor: '#0f0e17', color: '#e8e6f0', height: 56, borderRadius: 16, paddingHorizontal: 20, fontSize: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, addOptionButton: { flexDirection: 'row', gap: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed', borderRadius: 16, height: 56, justifyContent: 'center', alignItems: 'center', marginTop: 8 }, addOptionText: { color: '#a78bfa', fontWeight: '700', fontSize: 15 }, 
   infoBox: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.02)', padding: 24, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', marginBottom: 16 }, infoText: { flex: 1, color: '#8b89a0', fontSize: 15, lineHeight: 24 },
   limitRow: { flexDirection: 'row', gap: 12 }, limitButton: { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.02)', alignItems: 'center' }, limitButtonActive: { borderColor: 'rgba(244, 114, 182, 0.4)', backgroundColor: 'rgba(244, 114, 182, 0.1)' }, limitButtonText: { color: '#8b89a0', fontWeight: '700', fontSize: 15 }, limitButtonTextActive: { color: '#f472b6', fontWeight: '900' },
-  toastContainer: { position: 'absolute', top: 100, alignSelf: 'center', backgroundColor: 'rgba(26, 25, 36, 0.95)', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.3)', shadowColor: '#ef4444', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 15, zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(10px)' } as any) }, toastIconBox: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(239, 68, 68, 0.1)', justifyContent: 'center', alignItems: 'center', marginRight: 12 }, toastText: { color: '#e8e6f0', fontSize: 15, fontWeight: '700' }
+  toastContainer: { position: 'absolute', top: 40, alignSelf: 'center', backgroundColor: 'rgba(26, 25, 36, 0.95)', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 100, borderWidth: 1, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 15, zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(10px)' } as any) }, toastIconBox: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12 }, toastText: { color: '#e8e6f0', fontSize: 15, fontWeight: '700' }
 });
