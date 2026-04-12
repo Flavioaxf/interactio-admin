@@ -1,28 +1,41 @@
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useRouter } from 'expo-router';
-import { getDatabase, ref, set } from 'firebase/database';
+import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Dimensions, Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated // Importante para a transição
+  ,
+
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  useWindowDimensions,
+  View
+} from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 import '../../src/firebase';
 
 const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
 // ─────────────────────────────────────────────
-// Componente de Fundo: Rede de Conexões (SVG)
+// Componente da Animação de Constelação (Network)
 // ─────────────────────────────────────────────
 function NetworkBackground() {
   const [particles, setParticles] = useState<any[]>([]);
-  const requestRef = useRef<number | null>(null);
+  const requestRef = useRef<number>(0);
   const particlesRef = useRef<any[]>([]);
 
   useEffect(() => {
-    const initParticles = Array.from({ length: 40 }).map(() => ({
+    const initParticles = Array.from({ length: 30 }).map(() => ({
       x: Math.random() * windowWidth,
       y: Math.random() * windowHeight,
-      vx: (Math.random() - 0.5) * 1.0, 
-      vy: (Math.random() - 0.5) * 1.0,
-      radius: Math.random() * 2 + 1.5,
+      vx: (Math.random() - 0.5) * 0.8, 
+      vy: (Math.random() - 0.5) * 0.8,
+      radius: Math.random() * 2 + 1,
     }));
     particlesRef.current = initParticles;
 
@@ -50,14 +63,14 @@ function NetworkBackground() {
       const dy = p1.y - p2.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
 
-      if (dist < 140) {
-        const opacity = 1 - dist / 140;
+      if (dist < 150) {
+        const opacity = 1 - dist / 150;
         lines.push(
           <Line
             key={`${i}-${j}`}
             x1={p1.x} y1={p1.y}
             x2={p2.x} y2={p2.y}
-            stroke={`rgba(167, 139, 250, ${opacity * 0.4})`}
+            stroke={`rgba(167, 139, 250, ${opacity * 0.3})`}
             strokeWidth={1}
           />
         );
@@ -70,7 +83,7 @@ function NetworkBackground() {
       <Svg height="100%" width="100%">
         {lines}
         {particles.map((p, i) => (
-          <Circle key={i} cx={p.x} cy={p.y} r={p.radius} fill="#a78bfa" opacity={0.8} />
+          <Circle key={i} cx={p.x} cy={p.y} r={p.radius} fill="#a78bfa" opacity={0.5} />
         ))}
       </Svg>
     </View>
@@ -78,167 +91,187 @@ function NetworkBackground() {
 }
 
 // ─────────────────────────────────────────────
-// Tela Principal do Painel
+// Tela de Login/Cadastro
 // ─────────────────────────────────────────────
-export default function DashboardScreen() {
+export default function LoginScreen() {
   const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
-  const buttonScale = useRef(new Animated.Value(1)).current;
-  
-  // Lendo o tamanho da tela em tempo real
   const { width } = useWindowDimensions();
-  const isMobile = width < 600; // Define que telas menores que 600px são "Mobile"
+  const isMobile = width < 768;
 
-  const handleCreateSession = async () => {
-    Animated.sequence([
-      Animated.timing(buttonScale, { toValue: 0.95, duration: 80, useNativeDriver: true }),
-      Animated.timing(buttonScale, { toValue: 1, duration: 120, useNativeDriver: true }),
-    ]).start();
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false); // NOVO: Estado para a transição
+  const [errorMessage, setErrorMessage] = useState('');
 
+  // Animação para a tela de loading (fade in)
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  const handleAuth = async () => {
+    if (!email || !password) {
+      setErrorMessage('Preencha os dados de acesso.');
+      return;
+    }
     setIsLoading(true);
+    setErrorMessage('');
+    const auth = getAuth();
+
     try {
-      const sessionCode = Math.floor(1000 + Math.random() * 9000).toString();
-      const db = getDatabase();
-      const sessionRef = ref(db, `sessions/${sessionCode}`);
-
-      await set(sessionRef, {
-        meta: { code: sessionCode, createdAt: Date.now(), status: 'active' }
+      if (isLoginMode) {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+      
+      // SUCESSO! Ativar transição antes de redirecionar
+      setIsNavigating(true);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300, // Duração do fade in (ms)
+        useNativeDriver: true,
+      }).start(() => {
+        // Redireciona APÓS a tela preta aparecer
+        setTimeout(() => {
+          router.replace('/dashboard'); 
+        }, 500); // Um pequeno delay extra (opcional) para garantir a leitura visual
       });
-
-      router.push(`/session/${sessionCode}/create-card`);
-    } catch (error) {
-      alert("Ops! Falha ao criar a sessão. Verifique sua conexão.");
-    } finally {
-      setIsLoading(false);
+      
+    } catch (error: any) {
+      setIsLoading(false); // Só desativa o loading do botão se der erro
+      setErrorMessage('Credenciais inválidas ou erro de conexão.');
     }
   };
 
   return (
-    <LinearGradient
-      colors={['#111827', '#0f0e17', '#1e1b4b']}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.root}
-    >
+    <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
       <NetworkBackground />
-
-      <View style={[styles.contentWrapper, { padding: isMobile ? 16 : 24 }]}>
-        
-        {/* Cartão Central (Mais fino no celular) */}
-        <View style={[styles.glassCard, { padding: isMobile ? 24 : 40 }]}>
-          <View style={styles.logoContainer}>
-            {/* Fonte menor no celular para não quebrar a linha */}
-            <Text style={[styles.title, { fontSize: isMobile ? 44 : 56 }]}>
-              inter<Text style={styles.highlight}>actio</Text>
-            </Text>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>PAINEL DO APRESENTADOR</Text>
+      
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}
+      >
+        <View style={[styles.container, { padding: isMobile ? 16 : 32 }]}>
+          
+          <View style={styles.card}>
+            <View style={styles.logoContainer}>
+              <Text style={styles.title}>
+                inter<Text style={styles.highlight}>actio</Text>
+              </Text>
+              <View style={[styles.modeIndicator, { backgroundColor: isLoginMode ? 'rgba(167, 139, 250, 0.1)' : 'rgba(52, 211, 153, 0.1)' }]}>
+                <Text style={[styles.modeText, { color: isLoginMode ? '#a78bfa' : '#34d399' }]}>
+                  {isLoginMode ? 'ACESSAR CONTA' : 'NOVO CADASTRO'}
+                </Text>
+              </View>
             </View>
-          </View>
 
-          <Animated.View style={{ transform: [{ scale: buttonScale }], width: '100%', marginTop: isMobile ? 10 : 20 }}>
-            <TouchableOpacity
-              style={[styles.buttonPrimary, isLoading && styles.buttonDisabled]}
-              onPress={handleCreateSession}
-              disabled={isLoading}
-              activeOpacity={0.85}
+            <Text style={styles.instructions}>
+              {isLoginMode 
+                ? 'Bem-vindo de volta! Digite suas credenciais.' 
+                : 'Crie sua conta para começar a interagir.'}
+            </Text>
+
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
+            <View style={styles.form}>
+              <TextInput
+                style={styles.input}
+                placeholder="E-mail"
+                placeholderTextColor="#5a5872"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+                editable={!isNavigating} // Desabilita input durante a transição
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Senha"
+                placeholderTextColor="#5a5872"
+                secureTextEntry
+                value={password}
+                onChangeText={setPassword}
+                editable={!isNavigating} // Desabilita input durante a transição
+              />
+
+              <TouchableOpacity 
+                style={[styles.btnAction, { backgroundColor: isLoginMode ? '#a78bfa' : '#34d399' }]} 
+                onPress={handleAuth}
+                disabled={isLoading || isNavigating}
+              >
+                {isLoading && !isNavigating ? <ActivityIndicator color="#0f0e17" /> : (
+                  <Text style={styles.btnActionText}>
+                    {isLoginMode ? 'Entrar Agora' : 'Finalizar Cadastro'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity 
+              style={styles.toggleMode} 
+              onPress={() => {
+                setIsLoginMode(!isLoginMode);
+                setErrorMessage('');
+              }}
+              disabled={isLoading || isNavigating}
             >
-              {isLoading ? (
-                <ActivityIndicator color="#0f0e17" />
-              ) : (
-                <Text style={styles.buttonTextPrimary}>Criar Nova Sessão</Text>
-              )}
+              <Text style={styles.toggleText}>
+                {isLoginMode ? 'Não tem uma conta? ' : 'Já possui acesso? '}
+                <Text style={[styles.toggleLink, { color: isLoginMode ? '#a78bfa' : '#34d399' }]}>
+                  {isLoginMode ? 'Cadastre-se aqui' : 'Faça login'}
+                </Text>
+              </Text>
             </TouchableOpacity>
-          </Animated.View>
-
-          <TouchableOpacity style={styles.buttonSecondary}>
-            <Text style={styles.buttonTextSecondary}>Acessar histórico de sessões</Text>
-          </TouchableOpacity>
+          </View>
         </View>
+      </KeyboardAvoidingView>
 
-      </View>
+      {/* ── TELA DE TRANSIÇÃO (OVERLAY) ── */}
+      {isNavigating && (
+        <Animated.View style={[styles.transitionOverlay, { opacity: fadeAnim }]}>
+          <ActivityIndicator size="large" color="#a78bfa" />
+          <Text style={styles.transitionText}>A preparar o seu painel...</Text>
+        </Animated.View>
+      )}
 
-      {/* Rodapé Inteligente (Empilha no celular, fica lado a lado no PC) */}
-      <View style={[
-        styles.footer, 
-        { 
-          flexDirection: isMobile ? 'column' : 'row',
-          bottom: isMobile ? 20 : 30,
-          gap: isMobile ? 12 : 0
-        }
-      ]}>
-        <Text style={styles.footerText}>Interactio OS • Versão 1.0 (Beta)</Text>
-        <TouchableOpacity><Text style={styles.footerLink}>Precisa de ajuda?</Text></TouchableOpacity>
-      </View>
-    </LinearGradient>
+    </View>
   );
 }
 
-// ─────────────────────────────────────────────
-// Estilos Base
-// ─────────────────────────────────────────────
 const styles = StyleSheet.create({
-  root: { flex: 1, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  contentWrapper: { width: '100%', maxWidth: 480, alignItems: 'center', zIndex: 10 },
-  
-  glassCard: {
-    width: '100%',
-    backgroundColor: '#1a1924', 
-    borderRadius: 32,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 10,
-  },
-
-  logoContainer: { alignItems: 'center', marginBottom: 40 },
-  title: { fontWeight: '800', color: '#e8e6f0', marginBottom: 12, letterSpacing: -1.5 },
+  root: { flex: 1, backgroundColor: '#0f0e17' },
+  keyboardView: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  container: { width: '100%', maxWidth: 450 },
+  card: { backgroundColor: '#1a1924', borderRadius: 32, padding: 40, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.5, shadowRadius: 30, elevation: 10 },
+  logoContainer: { alignItems: 'center', marginBottom: 20 },
+  title: { fontSize: 48, fontWeight: '800', letterSpacing: -1.5, color: '#e8e6f0' },
   highlight: { color: '#a78bfa' },
+  modeIndicator: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 100, marginTop: 12 },
+  modeText: { fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+  instructions: { color: '#8b89a0', fontSize: 14, textAlign: 'center', marginBottom: 30, fontWeight: '500' },
+  errorText: { color: '#ef4444', fontSize: 12, marginBottom: 15, fontWeight: '600' },
+  form: { width: '100%', gap: 12 },
+  input: { backgroundColor: '#0f0e17', color: '#e8e6f0', borderRadius: 16, paddingHorizontal: 20, height: 56, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  btnAction: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
+  btnActionText: { color: '#0f0e17', fontSize: 16, fontWeight: '800' },
+  toggleMode: { marginTop: 25 },
+  toggleText: { color: '#5a5872', fontSize: 13, fontWeight: '500' },
+  toggleLink: { fontWeight: '700' },
   
-  badge: {
-    backgroundColor: 'rgba(167, 139, 250, 0.15)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 100,
-  },
-  badgeText: { fontSize: 12, color: '#a78bfa', fontWeight: '700', letterSpacing: 1.5 },
-
-  buttonPrimary: { 
-    backgroundColor: '#a78bfa', 
-    paddingVertical: 20, 
-    borderRadius: 16, 
-    width: '100%', 
+  // Estilo do Overlay de Transição
+  transitionOverlay: {
+    ...StyleSheet.absoluteFillObject, // Cobre a tela toda
+    backgroundColor: '#0f0e17', // Mesma cor do fundo para parecer que a UI sumiu
+    justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#a78bfa',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 15,
-    ...(Platform.OS === 'web' && {
-      transitionProperty: 'all',
-      transitionDuration: '0.3s',
-      cursor: 'pointer',
-      ':hover': { transform: 'translateY(-3px)', shadowOpacity: 0.45 }
-    } as any),
+    zIndex: 999, // Fica por cima de tudo
   },
-  
-  buttonDisabled: { opacity: 0.7 },
-  buttonTextPrimary: { color: '#0f0e17', fontSize: 16, fontWeight: '800', letterSpacing: 0.5 },
-
-  buttonSecondary: { marginTop: 20, paddingVertical: 12 },
-  buttonTextSecondary: { color: '#8b89a0', fontSize: 14, fontWeight: '600' },
-
-  footer: {
-    position: 'absolute',
-    width: '100%',
-    maxWidth: 800,
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    zIndex: 10,
-  },
-  footerText: { color: '#5a5872', fontSize: 12, fontWeight: '600', textAlign: 'center' },
-  footerLink: { color: '#a78bfa', fontSize: 12, fontWeight: '600', textAlign: 'center' }
+  transitionText: {
+    color: '#a78bfa',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  }
 });
