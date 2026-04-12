@@ -1,20 +1,23 @@
-import { useRouter, Stack } from 'expo-router';
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  StyleSheet, 
-  Text, 
-  View, 
-  TextInput, 
-  TouchableOpacity, 
+import { Stack, useRouter } from 'expo-router';
+import { createUserWithEmailAndPassword, getAuth, signInWithEmailAndPassword } from 'firebase/auth';
+import React, { useEffect, useRef, useState } from 'react';
+import {
   ActivityIndicator,
+  Animated // Importante para a transição
+  ,
+
+  Dimensions,
   KeyboardAvoidingView,
   Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
   useWindowDimensions,
-  Dimensions
+  View
 } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import '../../src/firebase'; 
+import '../../src/firebase';
 
 const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 
@@ -23,7 +26,7 @@ const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
 // ─────────────────────────────────────────────
 function NetworkBackground() {
   const [particles, setParticles] = useState<any[]>([]);
-  const requestRef = useRef<number>(null);
+  const requestRef = useRef<number>(0);
   const particlesRef = useRef<any[]>([]);
 
   useEffect(() => {
@@ -99,7 +102,11 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false); // NOVO: Estado para a transição
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Animação para a tela de loading (fade in)
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const handleAuth = async () => {
     if (!email || !password) {
@@ -116,11 +123,23 @@ export default function LoginScreen() {
       } else {
         await createUserWithEmailAndPassword(auth, email, password);
       }
-      router.replace('/dashboard'); 
+      
+      // SUCESSO! Ativar transição antes de redirecionar
+      setIsNavigating(true);
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 300, // Duração do fade in (ms)
+        useNativeDriver: true,
+      }).start(() => {
+        // Redireciona APÓS a tela preta aparecer
+        setTimeout(() => {
+          router.replace('/dashboard'); 
+        }, 500); // Um pequeno delay extra (opcional) para garantir a leitura visual
+      });
+      
     } catch (error: any) {
+      setIsLoading(false); // Só desativa o loading do botão se der erro
       setErrorMessage('Credenciais inválidas ou erro de conexão.');
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -136,7 +155,6 @@ export default function LoginScreen() {
         <View style={[styles.container, { padding: isMobile ? 16 : 32 }]}>
           
           <View style={styles.card}>
-            {/* Header com Logo */}
             <View style={styles.logoContainer}>
               <Text style={styles.title}>
                 inter<Text style={styles.highlight}>actio</Text>
@@ -165,6 +183,7 @@ export default function LoginScreen() {
                 autoCapitalize="none"
                 value={email}
                 onChangeText={setEmail}
+                editable={!isNavigating} // Desabilita input durante a transição
               />
               <TextInput
                 style={styles.input}
@@ -173,14 +192,15 @@ export default function LoginScreen() {
                 secureTextEntry
                 value={password}
                 onChangeText={setPassword}
+                editable={!isNavigating} // Desabilita input durante a transição
               />
 
               <TouchableOpacity 
                 style={[styles.btnAction, { backgroundColor: isLoginMode ? '#a78bfa' : '#34d399' }]} 
                 onPress={handleAuth}
-                disabled={isLoading}
+                disabled={isLoading || isNavigating}
               >
-                {isLoading ? <ActivityIndicator color="#0f0e17" /> : (
+                {isLoading && !isNavigating ? <ActivityIndicator color="#0f0e17" /> : (
                   <Text style={styles.btnActionText}>
                     {isLoginMode ? 'Entrar Agora' : 'Finalizar Cadastro'}
                   </Text>
@@ -194,6 +214,7 @@ export default function LoginScreen() {
                 setIsLoginMode(!isLoginMode);
                 setErrorMessage('');
               }}
+              disabled={isLoading || isNavigating}
             >
               <Text style={styles.toggleText}>
                 {isLoginMode ? 'Não tem uma conta? ' : 'Já possui acesso? '}
@@ -205,6 +226,15 @@ export default function LoginScreen() {
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* ── TELA DE TRANSIÇÃO (OVERLAY) ── */}
+      {isNavigating && (
+        <Animated.View style={[styles.transitionOverlay, { opacity: fadeAnim }]}>
+          <ActivityIndicator size="large" color="#a78bfa" />
+          <Text style={styles.transitionText}>A preparar o seu painel...</Text>
+        </Animated.View>
+      )}
+
     </View>
   );
 }
@@ -213,18 +243,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0f0e17' },
   keyboardView: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   container: { width: '100%', maxWidth: 450 },
-  card: {
-    backgroundColor: '#1a1924',
-    borderRadius: 32,
-    padding: 40,
-    width: '100%',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.5,
-    shadowRadius: 30,
-    elevation: 10,
-  },
+  card: { backgroundColor: '#1a1924', borderRadius: 32, padding: 40, width: '100%', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.5, shadowRadius: 30, elevation: 10 },
   logoContainer: { alignItems: 'center', marginBottom: 20 },
   title: { fontSize: 48, fontWeight: '800', letterSpacing: -1.5, color: '#e8e6f0' },
   highlight: { color: '#a78bfa' },
@@ -233,18 +252,26 @@ const styles = StyleSheet.create({
   instructions: { color: '#8b89a0', fontSize: 14, textAlign: 'center', marginBottom: 30, fontWeight: '500' },
   errorText: { color: '#ef4444', fontSize: 12, marginBottom: 15, fontWeight: '600' },
   form: { width: '100%', gap: 12 },
-  input: {
-    backgroundColor: '#0f0e17',
-    color: '#e8e6f0',
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    height: 56,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
+  input: { backgroundColor: '#0f0e17', color: '#e8e6f0', borderRadius: 16, paddingHorizontal: 20, height: 56, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
   btnAction: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 10 },
   btnActionText: { color: '#0f0e17', fontSize: 16, fontWeight: '800' },
   toggleMode: { marginTop: 25 },
   toggleText: { color: '#5a5872', fontSize: 13, fontWeight: '500' },
   toggleLink: { fontWeight: '700' },
+  
+  // Estilo do Overlay de Transição
+  transitionOverlay: {
+    ...StyleSheet.absoluteFillObject, // Cobre a tela toda
+    backgroundColor: '#0f0e17', // Mesma cor do fundo para parecer que a UI sumiu
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999, // Fica por cima de tudo
+  },
+  transitionText: {
+    color: '#a78bfa',
+    marginTop: 16,
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  }
 });
