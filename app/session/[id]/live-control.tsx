@@ -9,7 +9,8 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   Platform,
-  ScrollView
+  ScrollView,
+  TextInput 
 } from 'react-native';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { getDatabase, ref, onValue, update } from 'firebase/database';
@@ -17,20 +18,10 @@ import { Ionicons } from '@expo/vector-icons';
 import '../../../src/firebase'; 
 
 const { width: windowWidth, height: windowHeight } = Dimensions.get('window');
+const CLOUD_COLORS = ['#f472b6', '#38bdf8', '#34d399', '#a78bfa', '#fbbf24', '#f87171'];
 
-// ── COMPONENTE DA PALAVRA ANIMADA (MENTIMETER STYLE) ──
-function AnimatedCloudWord({ wordObj, index, maxWordCount, cloudColors }: any) {
-  const minFont = 24;
-  const maxFont = 110; 
-  const fontSize = maxWordCount === 1 
-    ? 45 
-    : minFont + ((wordObj.count - 1) / (maxWordCount - 1)) * (maxFont - minFont);
-  
-  const color = cloudColors[index % cloudColors.length];
-  // Roda algumas palavras para dar um efeito orgânico e caótico
-  const isVertical = (index % 4 === 0) && fontSize < 60;
-
-  // Animação de Surgimento (Pop-in)
+// ── COMPONENTE DA PALAVRA ──
+function AnimatedCloudWord({ data, maxCount }: any) {
   const scaleAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -47,21 +38,22 @@ function AnimatedCloudWord({ wordObj, index, maxWordCount, cloudColors }: any) {
       style={[
         styles.cloudWord, 
         { 
-          fontSize, 
-          color,
+          position: 'absolute',
+          fontSize: data.fontSize, 
+          lineHeight: data.fontSize * 1.1,
+          color: data.color,
           transform: [
+            { translateX: data.x },
+            { translateY: data.y },
             { scale: scaleAnim },
-            { rotate: isVertical ? '-90deg' : '0deg' }
+            { rotate: data.isVertical ? '-90deg' : '0deg' }
           ],
-          marginHorizontal: isVertical ? -5 : 12,
-          marginVertical: isVertical ? 20 : 6,
-          textShadowColor: wordObj.count === maxWordCount ? color : 'transparent',
+          textShadowColor: data.count === maxCount ? data.color : 'transparent',
         },
-        // O 'transition' cuida de animar suavemente a mudança de tamanho e posição na web!
-        Platform.OS === 'web' && { transition: 'all 0.6s cubic-bezier(0.25, 0.8, 0.25, 1)' } as any
+        Platform.OS === 'web' && { transition: 'transform 0.5s ease-out, font-size 0.5s ease' } as any
       ]}
     >
-      {wordObj.text.toLowerCase()}
+      {data.text.toLowerCase()}
     </Animated.Text>
   );
 }
@@ -135,6 +127,17 @@ export default function LiveControlScreen() {
   const [totalParticipants, setTotalParticipants] = useState(0);
   const [showQR, setShowQR] = useState(false);
 
+  const [isQuickCreateOpen, setIsQuickCreateOpen] = useState(false);
+  const [quickTab, setQuickTab] = useState('multiple_choice');
+  const [quickQuestion, setQuickQuestion] = useState('');
+  const [quickOptions, setQuickOptions] = useState(['', '']);
+  const [quickLimit, setQuickLimit] = useState<number | 'unlimited'>(3);
+  const [isLaunching, setIsLaunching] = useState(false);
+
+  // ── ESTADOS DA NUVEM ──
+  const [cloudLayout, setCloudLayout] = useState<any[]>([]);
+  const [cloudScale, setCloudScale] = useState(1); // Controla o "zoom" automático da nuvem
+
   useEffect(() => {
     if (!id) return;
     const db = getDatabase();
@@ -177,12 +180,111 @@ export default function LiveControlScreen() {
     return () => unsubscribe();
   }, [id]);
 
+  const currentIndex = typeof sessionData?.currentInteraction === 'number' ? sessionData.currentInteraction : 0;
+  const currentInteraction = sessionData?.interactions?.[currentIndex];
+  const totalSlides = sessionData?.interactions?.length || 1;
+
+  // ── ALGORITMO COM AUTO-ESCALA ──
+  useEffect(() => {
+    if (currentInteraction?.type !== 'word_cloud') return;
+
+    const sortedWords = Object.entries(votes)
+      .map(([text, count]) => ({ text, count }))
+      .sort((a, b) => b.count - a.count);
+
+    if (sortedWords.length === 0) {
+      setCloudLayout([]);
+      setCloudScale(1);
+      return;
+    }
+
+    const maxCount = sortedWords[0].count;
+    const minFont = 24;
+    const maxFont = 110; 
+    
+    const placed: any[] = [];
+    
+    // Variáveis para medir o tamanho total da nuvem gerada
+    let minLeft = 0;
+    let maxRight = 0;
+    let minTop = 0;
+    let maxBottom = 0;
+
+    sortedWords.forEach((wordObj, index) => {
+      const fontSize = maxCount === 1 
+        ? 50 
+        : minFont + ((wordObj.count - 1) / (maxCount - 1)) * (maxFont - minFont);
+
+      const isVertical = (index % 3 === 0) && index !== 0 && fontSize < 70; 
+      
+      const charWidth = fontSize * 0.55; 
+      const wordWidth = wordObj.text.length * charWidth;
+      const wordHeight = fontSize * 1.1;
+
+      const w = isVertical ? wordHeight : wordWidth;
+      const h = isVertical ? wordWidth : wordHeight;
+
+      let angle = index * 137.5; 
+      let radius = 0;
+      let hasPlaced = false;
+      const step = 4; 
+
+      while (!hasPlaced && radius < 1500) { 
+        const x = radius * Math.cos(angle);
+        const y = radius * Math.sin(angle) * 0.6; 
+
+        const pad = 6; 
+        const bounds = {
+          left: x - w / 2 - pad,
+          right: x + w / 2 + pad,
+          top: y - h / 2 - pad,
+          bottom: y + h / 2 + pad
+        };
+
+        const collision = placed.some(p => {
+          return !(bounds.left >= p.bounds.right || 
+                   bounds.right <= p.bounds.left || 
+                   bounds.top >= p.bounds.bottom || 
+                   bounds.bottom <= p.bounds.top);
+        });
+
+        if (!collision) {
+          placed.push({ ...wordObj, x, y, fontSize, isVertical, bounds, color: CLOUD_COLORS[index % CLOUD_COLORS.length] });
+          hasPlaced = true;
+          
+          // Atualiza as extremidades da nuvem
+          if (bounds.left < minLeft) minLeft = bounds.left;
+          if (bounds.right > maxRight) maxRight = bounds.right;
+          if (bounds.top < minTop) minTop = bounds.top;
+          if (bounds.bottom > maxBottom) maxBottom = bounds.bottom;
+        } else {
+          angle += 0.5;
+          radius += step;
+        }
+      }
+    });
+
+    // ── CALCULA A ESCALA PARA CABER NA TELA ──
+    const cloudTotalWidth = Math.max(maxRight - minLeft, 100);
+    const cloudTotalHeight = Math.max(maxBottom - minTop, 100);
+
+    // O espaço seguro da tela (desconta a barra superior, inferior e título)
+    const safeAreaWidth = windowWidth * 0.85; 
+    const safeAreaHeight = windowHeight * 0.50; // 50% da tela para garantir que nunca rola
+
+    let newScale = 1;
+    if (cloudTotalWidth > safeAreaWidth || cloudTotalHeight > safeAreaHeight) {
+      // Pega a menor escala possível para garantir que cabe dos dois lados e dá uma margem extra de 5% (0.95)
+      newScale = Math.min(safeAreaWidth / cloudTotalWidth, safeAreaHeight / cloudTotalHeight) * 0.95;
+    }
+
+    setCloudScale(newScale);
+    setCloudLayout(placed);
+  }, [votes, currentInteraction]);
+
   const changeSlide = async (direction: 'next' | 'prev') => {
     if (!sessionData || !sessionData.interactions) return;
-    const currentIndex = typeof sessionData.currentInteraction === 'number' ? sessionData.currentInteraction : 0;
-    const totalSlides = sessionData.interactions.length;
     let newIndex = currentIndex;
-    
     if (direction === 'next' && currentIndex < totalSlides - 1) newIndex = currentIndex + 1;
     else if (direction === 'prev' && currentIndex > 0) newIndex = currentIndex - 1;
     else return;
@@ -192,30 +294,45 @@ export default function LiveControlScreen() {
     await update(ref(db, `sessions/${sessionId}`), { currentInteraction: newIndex });
   };
 
+  const addQuickOption = () => { if (quickOptions.length < 6) setQuickOptions([...quickOptions, '']); };
+  const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
+
+  const handleLaunchQuickInteraction = async () => {
+    if (quickQuestion.trim() === '') return alert("Por favor, digite uma pergunta.");
+    setIsLaunching(true);
+    try {
+      const db = getDatabase();
+      const sessionIdStr = typeof id === 'string' ? id : id[0];
+      
+      const newInteraction = {
+        id: `slide_${Date.now()}`,
+        type: quickTab,
+        question: quickQuestion.trim(),
+        options: quickTab === 'multiple_choice' ? quickOptions.filter(opt => opt.trim() !== '') : [],
+        limit: quickTab === 'word_cloud' ? quickLimit : 1,
+        createdAt: Date.now()
+      };
+
+      const currentInteractions = sessionData?.interactions || [];
+      const newInteractions = [...currentInteractions, newInteraction];
+
+      await update(ref(db, `sessions/${sessionIdStr}`), {
+        interactions: newInteractions,
+        currentInteraction: newInteractions.length - 1,
+        updatedAt: Date.now()
+      });
+
+      setIsQuickCreateOpen(false);
+      setQuickQuestion('');
+      setQuickOptions(['', '']);
+      setIsLaunching(false);
+    } catch (error) {
+      alert("Erro ao lançar a interação.");
+      setIsLaunching(false);
+    }
+  };
+
   if (loading || errorMessage) return <LoadingOrError loading={loading} errorMessage={errorMessage} router={router} />;
-
-  const currentIndex = typeof sessionData?.currentInteraction === 'number' ? sessionData.currentInteraction : 0;
-  const currentInteraction = sessionData?.interactions?.[currentIndex];
-  const totalSlides = sessionData?.interactions?.length || 1;
-
-  const wordCloudArray = Object.entries(votes)
-    .map(([text, count]) => ({ text, count }))
-    .sort((a, b) => b.count - a.count);
-
-  const maxWordCount = wordCloudArray.length > 0 ? wordCloudArray[0].count : 1;
-  
-  const interleavedCloud: typeof wordCloudArray = [];
-  let left = 0;
-  let right = wordCloudArray.length - 1;
-  while(left <= right) {
-      if(left === right) { interleavedCloud.push(wordCloudArray[left]); break; }
-      interleavedCloud.push(wordCloudArray[left]);
-      interleavedCloud.push(wordCloudArray[right]);
-      left++;
-      right--;
-  }
-
-  const cloudColors = ['#f472b6', '#38bdf8', '#34d399', '#a78bfa', '#fbbf24', '#f87171'];
 
   return (
     <View style={styles.root}>
@@ -235,7 +352,6 @@ export default function LiveControlScreen() {
           <View style={styles.pinBadge}>
             <Text style={styles.pinText}>{id}</Text>
           </View>
-          {/* BOTÃO DO QR CODE COMPACTO NA BARRA SUPERIOR */}
           <TouchableOpacity style={styles.qrTriggerButton} onPress={() => setShowQR(true)} activeOpacity={0.8}>
             <Ionicons name="qr-code" size={20} color="#0f0e17" />
           </TouchableOpacity>
@@ -253,53 +369,48 @@ export default function LiveControlScreen() {
       </View>
 
       <View style={styles.mainContainer}>
-        {/* TÍTULO FICA FIXO NO TOPO */}
         <Text style={styles.questionTitle}>
           {currentInteraction?.question || "Aguardando próxima pergunta..."}
         </Text>
         
-        {/* ÁREA DE INTERAÇÃO ROLÁVEL (A NUVEM NÃO EMPURRA O TÍTULO) */}
-        <ScrollView 
-          style={{ flex: 1, width: '100%' }}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
+        {/* Retirado o comportamento de scroll para a nuvem. Ela ajusta-se via CSS Scale. */}
+        <View style={styles.interactionArea}>
           {currentInteraction?.type === 'multiple_choice' && (
-            <View style={styles.barsContainer}>
-              {currentInteraction?.options?.map((option: string, index: number) => {
-                const count = votes[index] || 0;
-                const percentage = totalParticipants > 0 ? (count / totalParticipants) : 0;
-                return (
-                  <View key={index} style={styles.barWrapper}>
-                    <View style={styles.barLabelGroup}>
-                      <Text style={styles.barOptionText}>{option}</Text>
-                      <Text style={styles.barCountText}>{count} <Text style={styles.barPercentText}>({(percentage * 100).toFixed(0)}%)</Text></Text>
+            <ScrollView style={{width: '100%'}} contentContainerStyle={{alignItems: 'center'}}>
+              <View style={styles.barsContainer}>
+                {currentInteraction?.options?.map((option: string, index: number) => {
+                  const count = votes[index] || 0;
+                  const percentage = totalParticipants > 0 ? (count / totalParticipants) : 0;
+                  return (
+                    <View key={index} style={styles.barWrapper}>
+                      <View style={styles.barLabelGroup}>
+                        <Text style={styles.barOptionText}>{option}</Text>
+                        <Text style={styles.barCountText}>{count} <Text style={styles.barPercentText}>({(percentage * 100).toFixed(0)}%)</Text></Text>
+                      </View>
+                      <View style={styles.barTrack}>
+                        <AnimatedBar percentage={percentage} />
+                      </View>
                     </View>
-                    <View style={styles.barTrack}>
-                      <AnimatedBar percentage={percentage} />
-                    </View>
-                  </View>
-                );
-              })}
-            </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
           )}
 
           {currentInteraction?.type === 'word_cloud' && (
             <View style={styles.cloudWrapper}>
-              {interleavedCloud.length === 0 ? (
+              {cloudLayout.length === 0 ? (
                 <View style={styles.waitingCloud}>
                   <Ionicons name="cloud-outline" size={80} color="rgba(244, 114, 182, 0.2)" />
                   <Text style={styles.waitingCloudText}>Aguardando as primeiras palavras...</Text>
                 </View>
               ) : (
-                <View style={styles.cloudFlexContainer}>
-                  {interleavedCloud.map((wordObj, index) => (
+                <View style={[styles.cloudCanvas, { transform: [{ scale: cloudScale }] }]}>
+                  {cloudLayout.map((cw) => (
                     <AnimatedCloudWord 
-                      key={wordObj.text} 
-                      wordObj={wordObj} 
-                      index={index} 
-                      maxWordCount={maxWordCount} 
-                      cloudColors={cloudColors} 
+                      key={cw.text} 
+                      data={cw} 
+                      maxCount={cloudLayout.length > 0 ? Math.max(...cloudLayout.map(w => w.count)) : 1}
                     />
                   ))}
                 </View>
@@ -313,26 +424,101 @@ export default function LiveControlScreen() {
               <Text style={styles.comingSoonText}>Modo Q&A em desenvolvimento...</Text>
             </View>
           )}
-        </ScrollView>
+        </View>
       </View>
 
       <View style={styles.footer}>
         <Text style={styles.footerBrand}>Interactio OS • Transmissão ao Vivo</Text>
       </View>
 
-      {totalSlides > 1 && (
-        <View style={styles.slideControls}>
-          <TouchableOpacity style={[styles.controlButton, currentIndex === 0 && styles.controlButtonDisabled]} onPress={() => changeSlide('prev')} disabled={currentIndex === 0}>
-            <Ionicons name="chevron-back" size={28} color={currentIndex === 0 ? '#5a5872' : '#e8e6f0'} />
-          </TouchableOpacity>
-          <View style={styles.slideIndicator}><Text style={styles.slideIndicatorText}>Slide {currentIndex + 1} de {totalSlides}</Text></View>
-          <TouchableOpacity style={[styles.controlButton, currentIndex === totalSlides - 1 && styles.controlButtonDisabled]} onPress={() => changeSlide('next')} disabled={currentIndex === totalSlides - 1}>
-            <Ionicons name="chevron-forward" size={28} color={currentIndex === totalSlides - 1 ? '#5a5872' : '#e8e6f0'} />
-          </TouchableOpacity>
+      <View style={styles.slideControls}>
+        <TouchableOpacity style={[styles.controlButton, currentIndex === 0 && styles.controlButtonDisabled]} onPress={() => changeSlide('prev')} disabled={currentIndex === 0}>
+          <Ionicons name="chevron-back" size={28} color={currentIndex === 0 ? '#5a5872' : '#e8e6f0'} />
+        </TouchableOpacity>
+        
+        <View style={styles.slideIndicator}>
+          <Text style={styles.slideIndicatorText}>Slide {currentIndex + 1} de {totalSlides}</Text>
+        </View>
+        
+        <TouchableOpacity style={[styles.controlButton, currentIndex === totalSlides - 1 && styles.controlButtonDisabled]} onPress={() => changeSlide('next')} disabled={currentIndex === totalSlides - 1}>
+          <Ionicons name="chevron-forward" size={28} color={currentIndex === totalSlides - 1 ? '#5a5872' : '#e8e6f0'} />
+        </TouchableOpacity>
+
+        <View style={styles.controlDivider} />
+
+        <TouchableOpacity style={styles.quickAddButton} onPress={() => setIsQuickCreateOpen(true)} activeOpacity={0.8}>
+          <Ionicons name="add" size={20} color="#0f0e17" />
+          <Text style={styles.quickAddButtonText}>Nova Pergunta</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* MODAIS (Criação Rápida e QR Code) MANTIDOS IGUAIS */}
+      {isQuickCreateOpen && (
+        <View style={styles.quickCreateOverlay}>
+          <ScrollView contentContainerStyle={styles.quickCreateScroll}>
+            <View style={styles.quickCreateCard}>
+              <View style={styles.quickCreateHeader}>
+                <Text style={styles.quickCreateTitle}>Lançar nova pergunta</Text>
+                <TouchableOpacity onPress={() => setIsQuickCreateOpen(false)} style={styles.quickCreateCloseBtn}>
+                  <Ionicons name="close" size={24} color="#8b89a0" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.qcTabsContainer}>
+                <TouchableOpacity style={[styles.qcTab, quickTab === 'multiple_choice' && styles.qcTabActiveMultipleChoice]} onPress={() => setQuickTab('multiple_choice')} activeOpacity={0.7}>
+                  <View style={[styles.qcIconBox, { backgroundColor: quickTab === 'multiple_choice' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="bar-chart" size={16} color={quickTab === 'multiple_choice' ? '#38bdf8' : '#8b89a0'} /></View>
+                  <Text style={[styles.qcTabText, quickTab === 'multiple_choice' && { color: '#e8e6f0' }]}>Múltipla Escolha</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.qcTab, quickTab === 'word_cloud' && styles.qcTabActiveWordCloud]} onPress={() => setQuickTab('word_cloud')} activeOpacity={0.7}>
+                  <View style={[styles.qcIconBox, { backgroundColor: quickTab === 'word_cloud' ? 'rgba(244, 114, 182, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="cloud" size={16} color={quickTab === 'word_cloud' ? '#f472b6' : '#8b89a0'} /></View>
+                  <Text style={[styles.qcTabText, quickTab === 'word_cloud' && { color: '#e8e6f0' }]}>Nuvem de Palavras</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.qcSection}>
+                <Text style={styles.qcLabel}>O QUE VOCÊ QUER PERGUNTAR AGORA?</Text>
+                <TextInput style={styles.qcTextArea} placeholder="Digite a sua pergunta surpresa..." placeholderTextColor="#5a5872" multiline value={quickQuestion} onChangeText={setQuickQuestion} />
+              </View>
+              {quickTab === 'multiple_choice' && (
+                <View style={styles.qcSection}>
+                  <Text style={styles.qcLabel}>OPÇÕES DE RESPOSTA</Text>
+                  {quickOptions.map((opt, index) => (
+                    <View key={index} style={styles.qcOptionRow}>
+                      <View style={styles.qcOptionLetterBox}><Text style={styles.qcOptionLetterText}>{getOptionLetter(index)}</Text></View>
+                      <TextInput style={styles.qcOptionInput} placeholder={`Opção ${getOptionLetter(index)}`} placeholderTextColor="#5a5872" value={opt} onChangeText={(text) => { const newOpts = [...quickOptions]; newOpts[index] = text; setQuickOptions(newOpts); }} />
+                    </View>
+                  ))}
+                  {quickOptions.length < 6 && (
+                    <TouchableOpacity style={styles.qcAddOptionButton} onPress={addQuickOption} activeOpacity={0.6}>
+                      <Ionicons name="add" size={18} color="#a78bfa" />
+                      <Text style={styles.qcAddOptionText}>Adicionar opção (Máx. 6)</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
+              {quickTab === 'word_cloud' && (
+                <View style={styles.qcSection}>
+                  <Text style={[styles.qcLabel, { color: '#f472b6' }]}>RESPOSTAS POR PARTICIPANTE</Text>
+                  <View style={styles.qcLimitRow}>
+                    {[1, 3, 5, 'unlimited'].map((limitValue) => (
+                      <TouchableOpacity key={limitValue.toString()} style={[styles.qcLimitButton, quickLimit === limitValue && styles.qcLimitButtonActive]} onPress={() => setQuickLimit(limitValue as any)} activeOpacity={0.7}>
+                        <Text style={[styles.qcLimitButtonText, quickLimit === limitValue && styles.qcLimitButtonTextActive]}>{limitValue === 'unlimited' ? 'Ilimitado' : limitValue}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+              <TouchableOpacity style={styles.qcLaunchButton} onPress={handleLaunchQuickInteraction} disabled={isLaunching} activeOpacity={0.8}>
+                {isLaunching ? <ActivityIndicator color="#0f0e17" /> : (
+                  <View style={styles.qcLaunchButtonInner}>
+                    <Ionicons name="flash" size={20} color="#0f0e17" />
+                    <Text style={styles.qcLaunchButtonText}>Lançar no Telão Instantaneamente</Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       )}
 
-      {/* MODAL GIGANTE DO QR CODE FLUTUANTE */}
       {showQR && (
         <TouchableOpacity style={styles.qrOverlay} activeOpacity={1} onPress={() => setShowQR(false)}>
           <View style={styles.qrModalCard}>
@@ -355,9 +541,7 @@ function AnimatedBar({ percentage }: { percentage: number }) {
     Animated.spring(widthAnim, { toValue: percentage * 100, useNativeDriver: false, friction: 7, tension: 40 }).start();
   }, [percentage]);
 
-  return (
-    <Animated.View style={[styles.barFill, { width: widthAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }]} />
-  );
+  return <Animated.View style={[styles.barFill, { width: widthAnim.interpolate({ inputRange: [0, 100], outputRange: ['0%', '100%'] }) }]} />;
 }
 
 function LoadingOrError({ loading, errorMessage, router }: { loading: boolean, errorMessage: string, router: any }) {
@@ -377,24 +561,23 @@ function LoadingOrError({ loading, errorMessage, router }: { loading: boolean, e
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0f0e17' },
-  bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(100px)' as any }, 
-  loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' }, loadingText: { color: '#8b89a0', marginTop: 24, fontSize: 20, fontWeight: '600' }, backButtonAbsolute: { position: 'absolute', top: 40, left: 40, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+  root: { flex: 1, backgroundColor: '#0f0e17' }, bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(100px)' as any }, loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' }, loadingText: { color: '#8b89a0', marginTop: 24, fontSize: 20, fontWeight: '600' }, backButtonAbsolute: { position: 'absolute', top: 40, left: 40, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
   topBar: { height: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 60, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 14, 23, 0.6)', backdropFilter: 'blur(10px)' as any, zIndex: 50 }, topLeftGroup: { flexDirection: 'row', alignItems: 'center', gap: 20 }, backButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }, logoText: { fontSize: 36, fontWeight: '800', color: '#e8e6f0', letterSpacing: -1 }, highlightText: { color: '#a78bfa' }, pinCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, paddingLeft: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, joinLabel: { color: '#8b89a0', fontSize: 18, marginRight: 16 }, whiteText: { color: '#fff', fontWeight: '700' }, pinBadge: { backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 8, borderRadius: 100, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, pinText: { color: '#0f0e17', fontSize: 28, fontWeight: '900', letterSpacing: 2 }, qrTriggerButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#e8e6f0', justifyContent: 'center', alignItems: 'center', marginLeft: 12, shadowColor: '#fff', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.2, shadowRadius: 10 }, statsCard: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, paddingRight: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, statsIconBox: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(167, 139, 250, 0.15)', justifyContent: 'center', alignItems: 'center' }, statsLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '800', letterSpacing: 1 }, statsText: { color: '#e8e6f0', fontSize: 24, fontWeight: '800', lineHeight: 28 },
   
   mainContainer: { flex: 1, paddingHorizontal: 60, paddingTop: 40, paddingBottom: 100, zIndex: 10 },
   questionTitle: { color: '#e8e6f0', fontSize: 48, fontWeight: '900', marginBottom: 24, lineHeight: 56, letterSpacing: -1, textAlign: 'center' },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', width: '100%' },
+  interactionArea: { flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' },
   
   barsContainer: { width: '100%', maxWidth: 1000, gap: 40 }, barWrapper: { width: '100%' }, barLabelGroup: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16, alignItems: 'flex-end' }, barOptionText: { color: '#e8e6f0', fontSize: 24, fontWeight: '700' }, barCountText: { color: '#a78bfa', fontSize: 28, fontWeight: '900' }, barPercentText: { color: '#8b89a0', fontSize: 18, fontWeight: '600' }, barTrack: { height: 32, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.02)' }, barFill: { height: '100%', backgroundColor: '#a78bfa', borderRadius: 16, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.8, shadowRadius: 15 },
   
-  cloudWrapper: { flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center' },
+  cloudWrapper: { flex: 1, width: '100%', justifyContent: 'center', alignItems: 'center', overflow: 'visible' },
   waitingCloud: { alignItems: 'center', padding: 60, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, waitingCloudText: { color: '#8b89a0', fontSize: 24, fontWeight: '600', marginTop: 24 },
-  cloudFlexContainer: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', alignContent: 'center', maxWidth: 1400 },
+  cloudCanvas: { position: 'relative', width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
   cloudWord: { fontWeight: '900', letterSpacing: -2, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 30 },
   
   comingSoonBox: { alignItems: 'center', padding: 40, backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, comingSoonText: { color: '#8b89a0', fontSize: 20, fontWeight: '600', marginTop: 16 },
   footer: { height: 60, justifyContent: 'center', alignItems: 'center', position: 'absolute', bottom: 0, width: '100%' }, footerBrand: { color: '#5a5872', fontSize: 14, fontWeight: '600', letterSpacing: 1 },
-  slideControls: { position: 'absolute', bottom: 40, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 100, padding: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20, backdropFilter: 'blur(15px)' as any, zIndex: 100 }, controlButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }, controlButtonDisabled: { backgroundColor: 'transparent', opacity: 0.5 }, slideIndicator: { paddingHorizontal: 24 }, slideIndicatorText: { color: '#e8e6f0', fontSize: 18, fontWeight: '800', letterSpacing: 1 },
-  qrOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 14, 23, 0.90)', justifyContent: 'center', alignItems: 'center', zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(20px)' } as any) }, qrModalCard: { backgroundColor: 'rgba(26, 25, 36, 0.8)', padding: 48, borderRadius: 48, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', alignItems: 'center', shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.15, shadowRadius: 50 }, qrModalInnerBorder: { padding: 32, backgroundColor: '#0f0e17', borderRadius: 32, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 32 }, qrModalDesc: { color: '#e8e6f0', fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 }, qrModalHint: { color: '#8b89a0', fontSize: 16, fontWeight: '600' }
+  slideControls: { position: 'absolute', bottom: 40, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 100, padding: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.5, shadowRadius: 20, backdropFilter: 'blur(15px)' as any, zIndex: 100 }, controlButton: { width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }, controlButtonDisabled: { backgroundColor: 'transparent', opacity: 0.5 }, slideIndicator: { paddingHorizontal: 24 }, slideIndicatorText: { color: '#e8e6f0', fontSize: 18, fontWeight: '800', letterSpacing: 1 }, controlDivider: { width: 1, height: 32, backgroundColor: 'rgba(255,255,255,0.1)', marginHorizontal: 8 }, quickAddButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#c4b5fd', paddingHorizontal: 20, height: 56, borderRadius: 28, marginLeft: 4 }, quickAddButtonText: { color: '#0f0e17', fontSize: 16, fontWeight: '800' },
+  qrOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 14, 23, 0.90)', justifyContent: 'center', alignItems: 'center', zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(20px)' } as any) }, qrModalCard: { backgroundColor: 'rgba(26, 25, 36, 0.8)', padding: 48, borderRadius: 48, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', alignItems: 'center', shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.15, shadowRadius: 50 }, qrModalInnerBorder: { padding: 32, backgroundColor: '#0f0e17', borderRadius: 32, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', marginBottom: 32 }, qrModalDesc: { color: '#e8e6f0', fontSize: 28, fontWeight: '800', letterSpacing: -0.5, marginBottom: 8 }, qrModalHint: { color: '#8b89a0', fontSize: 16, fontWeight: '600' },
+  quickCreateOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(15, 14, 23, 0.85)', justifyContent: 'center', alignItems: 'center', zIndex: 2000, ...(Platform.OS === 'web' && { backdropFilter: 'blur(10px)' } as any) }, quickCreateScroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', width: windowWidth, paddingVertical: 40 }, quickCreateCard: { width: '100%', maxWidth: 800, backgroundColor: '#1a1924', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.3)', shadowColor: '#38bdf8', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.2, shadowRadius: 40 }, quickCreateHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }, quickCreateTitle: { color: '#e8e6f0', fontSize: 28, fontWeight: '900' }, quickCreateCloseBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, qcTabsContainer: { flexDirection: 'row', gap: 12, marginBottom: 32, flexWrap: 'wrap' }, qcTab: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, qcTabActiveMultipleChoice: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(56, 189, 248, 0.3)' }, qcTabActiveWordCloud: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(244, 114, 182, 0.3)' }, qcIconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }, qcTabText: { color: '#8b89a0', fontWeight: '700', fontSize: 14 }, qcSection: { marginBottom: 24 }, qcLabel: { color: '#38bdf8', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, marginBottom: 12 }, qcTextArea: { backgroundColor: '#0f0e17', color: '#e8e6f0', fontSize: 18, borderRadius: 16, padding: 20, minHeight: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', textAlignVertical: 'top', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, qcOptionRow: { flexDirection: 'row', marginBottom: 12 }, qcOptionLetterBox: { backgroundColor: 'rgba(56, 189, 248, 0.1)', width: 48, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.15)' }, qcOptionLetterText: { color: '#38bdf8', fontSize: 16, fontWeight: '800' }, qcOptionInput: { flex: 1, backgroundColor: '#0f0e17', color: '#e8e6f0', height: 48, borderRadius: 12, paddingHorizontal: 16, fontSize: 15, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, qcAddOptionButton: { flexDirection: 'row', gap: 8, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.3)', borderStyle: 'dashed', borderRadius: 12, height: 48, justifyContent: 'center', alignItems: 'center', marginTop: 4 }, qcAddOptionText: { color: '#38bdf8', fontWeight: '700', fontSize: 14 }, qcLimitRow: { flexDirection: 'row', gap: 8 }, qcLimitButton: { flex: 1, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.02)', alignItems: 'center' }, qcLimitButtonActive: { borderColor: 'rgba(244, 114, 182, 0.4)', backgroundColor: 'rgba(244, 114, 182, 0.1)' }, qcLimitButtonText: { color: '#8b89a0', fontWeight: '700', fontSize: 14 }, qcLimitButtonTextActive: { color: '#f472b6', fontWeight: '900' }, qcLaunchButton: { backgroundColor: '#38bdf8', paddingVertical: 16, borderRadius: 16, shadowColor: '#38bdf8', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 15, marginTop: 16 }, qcLaunchButtonInner: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }, qcLaunchButtonText: { color: '#0f0e17', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 }
 });

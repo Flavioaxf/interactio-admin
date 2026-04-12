@@ -202,7 +202,7 @@ export default function LoginScreen() {
               >
                 {isLoading && !isNavigating ? <ActivityIndicator color="#0f0e17" /> : (
                   <Text style={styles.btnActionText}>
-                    {isLoginMode ? 'Entrar Agora' : 'Finalizar Cadastro'}
+                    {isLoginMode ? 'Entrar' : 'Finalizar Cadastro'}
                   </Text>
                 )}
               </TouchableOpacity>
