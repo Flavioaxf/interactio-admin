@@ -8,7 +8,8 @@ import {
   TouchableOpacity, 
   ScrollView, 
   Platform, 
-  ActivityIndicator
+  ActivityIndicator,
+  useWindowDimensions 
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons'; 
 import { getDatabase, ref, update, get } from 'firebase/database';
@@ -26,6 +27,9 @@ export default function StudioScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams(); 
   const sessionId = typeof id === 'string' ? id : id?.[0];
+  
+  const { width: windowWidth } = useWindowDimensions();
+  const isMobile = windowWidth < 768; 
   
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -81,7 +85,7 @@ export default function StudioScreen() {
       limit: 3
     };
     setSlides([...slides, newSlide]);
-    setActiveIndex(slides.length);
+    setActiveIndex(slides.length); 
   };
 
   const removeSlide = (indexToRemove: number) => {
@@ -136,6 +140,8 @@ export default function StudioScreen() {
   };
 
   const handleSaveAndPresent = async () => {
+    if (isMobile) return; // Trava de segurança extra
+
     const emptySlideIndex = slides.findIndex(s => s.question.trim() === '');
     if (emptySlideIndex !== -1) {
       setActiveIndex(emptySlideIndex);
@@ -157,8 +163,6 @@ export default function StudioScreen() {
         status: 'active'
       });
 
-      // Aqui está a correção: Desligamos o loading ANTES de redirecionar.
-      // Assim, se você voltar pelo botão do navegador, o botão estará liberado!
       setIsSaving(false);
       router.push(`/session/${sessionId}/live-control` as any);
       
@@ -177,12 +181,57 @@ export default function StudioScreen() {
 
   const activeSlide = slides[activeIndex];
 
+  const renderSlideList = () => (
+    <ScrollView 
+      horizontal={isMobile} 
+      showsHorizontalScrollIndicator={false}
+      showsVerticalScrollIndicator={false} 
+      contentContainerStyle={isMobile ? styles.mobileSlideList : styles.desktopSlideList}
+    >
+      {slides.map((slide, index) => (
+        <TouchableOpacity 
+          key={slide.id} 
+          style={[
+            styles.slideThumbnail, 
+            isMobile && styles.slideThumbnailMobile, 
+            activeIndex === index && styles.slideThumbnailActive
+          ]} 
+          onPress={() => setActiveIndex(index)} 
+          activeOpacity={0.7}
+        >
+          <View style={styles.slideHeader}>
+            <Text style={[styles.slideNumber, activeIndex === index && styles.slideNumberActive]}>Slide {index + 1}</Text>
+            {slides.length > 1 && (
+              <TouchableOpacity onPress={() => removeSlide(index)} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+                <Ionicons name="trash-outline" size={16} color="#ef4444" />
+              </TouchableOpacity>
+            )}
+          </View>
+          <View style={styles.slidePreview}>
+            <Ionicons name={slide.type === 'multiple_choice' ? 'bar-chart' : slide.type === 'word_cloud' ? 'cloud' : 'chatbubbles'} size={20} color={activeIndex === index ? '#a78bfa' : '#5a5872'} />
+            <Text style={styles.slidePreviewText} numberOfLines={isMobile ? 1 : 2}>
+              {slide.question || "Digite sua pergunta..."}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      ))}
+      <TouchableOpacity 
+        style={[styles.addSlideButton, isMobile && styles.addSlideButtonMobile]} 
+        onPress={addNewSlide} 
+        activeOpacity={0.7}
+      >
+        <Ionicons name="add" size={20} color="#a78bfa" />
+        {!isMobile && <Text style={styles.addSlideText}>Novo Slide</Text>}
+      </TouchableOpacity>
+    </ScrollView>
+  );
+
   return (
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {toast && (
-        <View style={[styles.toastContainer, { borderColor: toast.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(52, 211, 153, 0.3)' }]}>
+        <View style={[styles.toastContainer, { borderColor: toast.type === 'error' ? 'rgba(239, 68, 68, 0.3)' : 'rgba(52, 211, 153, 0.3)' }, isMobile && { top: 20 }]}>
           <View style={[styles.toastIconBox, { backgroundColor: toast.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(52, 211, 153, 0.1)' }]}>
             <Ionicons name={toast.type === 'error' ? "warning" : "checkmark-circle"} size={20} color={toast.type === 'error' ? "#ef4444" : "#34d399"} />
           </View>
@@ -190,71 +239,61 @@ export default function StudioScreen() {
         </View>
       )}
 
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, isMobile && styles.topBarMobile]}>
         <View style={styles.topLeft}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <Ionicons name="arrow-back" size={20} color="#e8e6f0" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Interactio <Text style={styles.highlightText}>Studio</Text></Text>
+          {!isMobile && <Text style={styles.headerTitle}>Interactio <Text style={styles.highlightText}>Studio</Text></Text>}
           <View style={styles.sessionCodeBadge}>
             <Text style={styles.sessionCodeLabel}>SESSÃO:</Text>
             <Text style={styles.sessionCodeText}>{sessionId}</Text>
           </View>
         </View>
 
-        <View style={styles.actionButtonsGroup}>
-          <TouchableOpacity style={styles.saveButton} onPress={handleSaveOnly} disabled={isSaving} activeOpacity={0.7}>
-            <Ionicons name="save-outline" size={18} color="#e8e6f0" />
-            <Text style={styles.saveButtonText}>Salvar Rascunho</Text>
+        <View style={[styles.actionButtonsGroup, isMobile && { gap: 8 }]}>
+          {/* NO MOBILE, O BOTÃO DE SALVAR PASSA A SER O PRINCIPAL E O DE APRESENTAR SOME */}
+          <TouchableOpacity 
+            style={[styles.saveButton, isMobile && { paddingHorizontal: 16, backgroundColor: '#c4b5fd', borderColor: '#c4b5fd' }]} 
+            onPress={handleSaveOnly} 
+            disabled={isSaving} 
+            activeOpacity={0.7}
+          >
+            <Ionicons name="save-outline" size={18} color={isMobile ? "#0f0e17" : "#e8e6f0"} />
+            <Text style={[styles.saveButtonText, isMobile && { color: '#0f0e17', fontWeight: '800', marginLeft: 8 }]}>
+              Salvar
+            </Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.presentButton} onPress={handleSaveAndPresent} disabled={isSaving} activeOpacity={0.8}>
-            {isSaving ? <ActivityIndicator color="#0f0e17" /> : (
-              <>
-                <Ionicons name={isLive ? "refresh" : "play"} size={18} color="#0f0e17" />
-                <Text style={styles.presentButtonText}>
-                  {isLive ? "Atualizar e Voltar" : "Salvar e Apresentar"}
-                </Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {!isMobile && (
+            <TouchableOpacity style={styles.presentButton} onPress={handleSaveAndPresent} disabled={isSaving} activeOpacity={0.8}>
+              {isSaving ? <ActivityIndicator color="#0f0e17" /> : (
+                <>
+                  <Ionicons name={isLive ? "refresh" : "play"} size={18} color="#0f0e17" />
+                  <Text style={styles.presentButtonText}>
+                    {isLive ? "Atualizar e Voltar" : "Salvar e Apresentar"}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </View>
 
-      <View style={styles.workspace}>
-        <View style={styles.sidebar}>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ padding: 24, gap: 16 }}>
-            {slides.map((slide, index) => (
-              <TouchableOpacity key={slide.id} style={[styles.slideThumbnail, activeIndex === index && styles.slideThumbnailActive]} onPress={() => setActiveIndex(index)} activeOpacity={0.7}>
-                <View style={styles.slideHeader}>
-                  <Text style={[styles.slideNumber, activeIndex === index && styles.slideNumberActive]}>Slide {index + 1}</Text>
-                  {slides.length > 1 && (
-                    <TouchableOpacity onPress={() => removeSlide(index)} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-                      <Ionicons name="trash-outline" size={16} color="#ef4444" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                <View style={styles.slidePreview}>
-                  <Ionicons name={slide.type === 'multiple_choice' ? 'bar-chart' : slide.type === 'word_cloud' ? 'cloud' : 'chatbubbles'} size={20} color={activeIndex === index ? '#a78bfa' : '#5a5872'} />
-                  <Text style={styles.slidePreviewText} numberOfLines={2}>{slide.question || "Digite sua pergunta..."}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-            <TouchableOpacity style={styles.addSlideButton} onPress={addNewSlide} activeOpacity={0.7}>
-              <Ionicons name="add" size={20} color="#a78bfa" />
-              <Text style={styles.addSlideText}>Novo Slide</Text>
-            </TouchableOpacity>
-          </ScrollView>
+      <View style={[styles.workspace, { flexDirection: isMobile ? 'column' : 'row' }]}>
+        
+        <View style={[styles.sidebar, isMobile && styles.sidebarMobile]}>
+          {renderSlideList()}
         </View>
 
         <View style={styles.editorArea}>
           <View style={[styles.bgGlow, { top: -100, left: -50, backgroundColor: 'rgba(167, 139, 250, 0.15)' }]} />
           <View style={[styles.bgGlow, { bottom: -100, right: -50, backgroundColor: 'rgba(56, 189, 248, 0.08)' }]} />
 
-          <ScrollView contentContainerStyle={styles.editorScroll} showsVerticalScrollIndicator={false}>
-            <View style={styles.card}>
+          <ScrollView contentContainerStyle={[styles.editorScroll, isMobile && { padding: 20 }]} showsVerticalScrollIndicator={false}>
+            <View style={[styles.card, isMobile && { padding: 24, borderRadius: 24 }]}>
               
-              <View style={styles.tabsContainer}>
+              <View style={[styles.tabsContainer, isMobile && { flexDirection: 'column', gap: 8 }]}>
                 <TouchableOpacity style={[styles.tab, activeSlide.type === 'multiple_choice' && styles.tabActiveMultipleChoice]} onPress={() => updateCurrentSlide('type', 'multiple_choice')} activeOpacity={0.7}>
                   <View style={[styles.iconBox, { backgroundColor: activeSlide.type === 'multiple_choice' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="bar-chart" size={16} color={activeSlide.type === 'multiple_choice' ? '#38bdf8' : '#8b89a0'} /></View>
                   <Text style={[styles.tabText, activeSlide.type === 'multiple_choice' && { color: '#e8e6f0' }]}>Múltipla Escolha</Text>
@@ -297,12 +336,12 @@ export default function StudioScreen() {
               {activeSlide.type === 'word_cloud' && (
                 <View style={styles.section}>
                   <Text style={[styles.label, { color: '#f472b6' }]}>RESPOSTAS POR PARTICIPANTE</Text>
-                  <View style={styles.limitRow}>
+                  <View style={[styles.limitRow, isMobile && { flexWrap: 'wrap' }]}>
                     {[1, 3, 5, 'unlimited'].map((limitValue) => {
                       const currentLimit = activeSlide.limit || 3;
                       const isActive = currentLimit === limitValue;
                       return (
-                        <TouchableOpacity key={limitValue.toString()} style={[styles.limitButton, isActive && styles.limitButtonActive]} onPress={() => updateCurrentSlide('limit', limitValue)} activeOpacity={0.7}>
+                        <TouchableOpacity key={limitValue.toString()} style={[styles.limitButton, isMobile && { minWidth: '45%' }, isActive && styles.limitButtonActive]} onPress={() => updateCurrentSlide('limit', limitValue)} activeOpacity={0.7}>
                           <Text style={[styles.limitButtonText, isActive && styles.limitButtonTextActive]}>{limitValue === 'unlimited' ? 'Ilimitado' : limitValue}</Text>
                         </TouchableOpacity>
                       );
@@ -312,13 +351,13 @@ export default function StudioScreen() {
               )}
 
               {activeSlide.type === 'word_cloud' && (
-                <View style={[styles.infoBox, { borderColor: 'rgba(244, 114, 182, 0.2)' }]}>
+                <View style={[styles.infoBox, { borderColor: 'rgba(244, 114, 182, 0.2)' }, isMobile && { flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
                   <Ionicons name="information-circle-outline" size={24} color="#f472b6" />
                   <Text style={styles.infoText}>Neste formato, o público envia palavras curtas. Termos repetidos ganharão destaque automático no telão.</Text>
                 </View>
               )}
               {activeSlide.type === 'q_and_a' && (
-                <View style={[styles.infoBox, { borderColor: 'rgba(52, 211, 153, 0.2)' }]}>
+                <View style={[styles.infoBox, { borderColor: 'rgba(52, 211, 153, 0.2)' }, isMobile && { flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
                   <Ionicons name="information-circle-outline" size={24} color="#34d399" />
                   <Text style={styles.infoText}>Neste formato, o público envia perguntas abertas e pode votar nas melhores dúvidas dos colegas.</Text>
                 </View>
@@ -334,14 +373,46 @@ export default function StudioScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0f0e17' }, loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' },
-  topBar: { height: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 10 }, topLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 }, backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, headerTitle: { color: '#e8e6f0', fontSize: 20, fontWeight: '800' }, highlightText: { color: '#a78bfa' }, sessionCodeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(167, 139, 250, 0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)', marginLeft: 8 }, sessionCodeLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }, sessionCodeText: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1 }, 
-  actionButtonsGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 }, saveButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }, saveButtonText: { color: '#e8e6f0', fontWeight: '700', fontSize: 15 }, presentButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, presentButtonText: { color: '#0f0e17', fontWeight: '800', fontSize: 15 },
-  workspace: { flex: 1, flexDirection: 'row' }, sidebar: { width: 300, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 5 }, slideThumbnail: { backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, slideThumbnailActive: { borderColor: 'rgba(167, 139, 250, 0.4)', backgroundColor: 'rgba(167, 139, 250, 0.05)' }, slideHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }, slideNumber: { color: '#8b89a0', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' }, slideNumberActive: { color: '#a78bfa' }, slidePreview: { flexDirection: 'row', alignItems: 'center', gap: 12 }, slidePreviewText: { flex: 1, color: '#e8e6f0', fontSize: 13, fontWeight: '600', lineHeight: 18 }, addSlideButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed' }, addSlideText: { color: '#a78bfa', fontWeight: '700' },
-  editorArea: { flex: 1, backgroundColor: '#0f0e17', position: 'relative', overflow: 'hidden' }, bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(120px)' as any, opacity: 0.8 }, editorScroll: { padding: 40, alignItems: 'center', flexGrow: 1, justifyContent: 'center' }, card: { width: '100%', maxWidth: 800, backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.4, shadowRadius: 30, backdropFilter: 'blur(20px)' as any },
+  
+  topBar: { height: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 10 }, 
+  topBarMobile: { paddingHorizontal: 16 }, 
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 }, 
+  backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, 
+  headerTitle: { color: '#e8e6f0', fontSize: 20, fontWeight: '800' }, highlightText: { color: '#a78bfa' }, 
+  sessionCodeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(167, 139, 250, 0.1)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)', marginLeft: 8 }, sessionCodeLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }, sessionCodeText: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1 }, 
+  
+  actionButtonsGroup: { flexDirection: 'row', alignItems: 'center', gap: 12 }, 
+  saveButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }, saveButtonText: { color: '#e8e6f0', fontWeight: '700', fontSize: 15 }, 
+  presentButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, presentButtonText: { color: '#0f0e17', fontWeight: '800', fontSize: 15 },
+  
+  workspace: { flex: 1 }, 
+  sidebar: { width: 300, borderRightWidth: 1, borderRightColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 5 }, 
+  sidebarMobile: { width: '100%', height: 120, borderRightWidth: 0, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' }, 
+  
+  desktopSlideList: { padding: 24, gap: 16 },
+  mobileSlideList: { padding: 16, gap: 12, alignItems: 'center' },
+
+  slideThumbnail: { backgroundColor: 'rgba(255,255,255,0.02)', borderRadius: 16, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, 
+  slideThumbnailMobile: { width: 160, padding: 12 }, 
+  slideThumbnailActive: { borderColor: 'rgba(167, 139, 250, 0.4)', backgroundColor: 'rgba(167, 139, 250, 0.05)' }, 
+  slideHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }, slideNumber: { color: '#8b89a0', fontSize: 12, fontWeight: '800', textTransform: 'uppercase' }, slideNumberActive: { color: '#a78bfa' }, slidePreview: { flexDirection: 'row', alignItems: 'center', gap: 12 }, slidePreviewText: { flex: 1, color: '#e8e6f0', fontSize: 13, fontWeight: '600', lineHeight: 18 }, 
+  addSlideButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, padding: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed' }, 
+  addSlideButtonMobile: { width: 60, height: 75, padding: 0 }, 
+  addSlideText: { color: '#a78bfa', fontWeight: '700' },
+  
+  editorArea: { flex: 1, backgroundColor: '#0f0e17', position: 'relative', overflow: 'hidden' }, bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(120px)' as any, opacity: 0.8 }, 
+  editorScroll: { padding: 40, alignItems: 'center', flexGrow: 1, justifyContent: 'center' }, 
+  card: { width: '100%', maxWidth: 800, backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.4, shadowRadius: 30, backdropFilter: 'blur(20px)' as any },
+  
   tabsContainer: { flexDirection: 'row', gap: 12, marginBottom: 40, flexWrap: 'wrap' }, tab: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, tabActiveMultipleChoice: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(56, 189, 248, 0.3)' }, tabActiveWordCloud: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(244, 114, 182, 0.3)' }, tabActiveQA: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(52, 211, 153, 0.3)' }, iconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }, tabText: { color: '#8b89a0', fontWeight: '700', fontSize: 14 }, 
+  
   section: { marginBottom: 32 }, label: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, marginBottom: 16 }, textArea: { backgroundColor: '#0f0e17', color: '#e8e6f0', fontSize: 18, borderRadius: 16, padding: 24, minHeight: 120, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', textAlignVertical: 'top', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, 
+  
   optionRow: { flexDirection: 'row', marginBottom: 12 }, optionLetterBox: { backgroundColor: 'rgba(167, 139, 250, 0.1)', width: 56, height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.15)' }, optionLetterText: { color: '#a78bfa', fontSize: 18, fontWeight: '800' }, optionInput: { flex: 1, backgroundColor: '#0f0e17', color: '#e8e6f0', height: 56, borderRadius: 16, paddingHorizontal: 20, fontSize: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, addOptionButton: { flexDirection: 'row', gap: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed', borderRadius: 16, height: 56, justifyContent: 'center', alignItems: 'center', marginTop: 8 }, addOptionText: { color: '#a78bfa', fontWeight: '700', fontSize: 15 }, 
+  
   infoBox: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.02)', padding: 24, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', marginBottom: 16 }, infoText: { flex: 1, color: '#8b89a0', fontSize: 15, lineHeight: 24 },
+  
   limitRow: { flexDirection: 'row', gap: 12 }, limitButton: { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.02)', alignItems: 'center' }, limitButtonActive: { borderColor: 'rgba(244, 114, 182, 0.4)', backgroundColor: 'rgba(244, 114, 182, 0.1)' }, limitButtonText: { color: '#8b89a0', fontWeight: '700', fontSize: 15 }, limitButtonTextActive: { color: '#f472b6', fontWeight: '900' },
+  
   toastContainer: { position: 'absolute', top: 40, alignSelf: 'center', backgroundColor: 'rgba(26, 25, 36, 0.95)', flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 100, borderWidth: 1, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 15, zIndex: 9999, ...(Platform.OS === 'web' && { backdropFilter: 'blur(10px)' } as any) }, toastIconBox: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12 }, toastText: { color: '#e8e6f0', fontSize: 15, fontWeight: '700' }
 });
