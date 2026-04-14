@@ -13,7 +13,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons'; 
 import { getDatabase, ref, update, get } from 'firebase/database';
-import '../../../src/firebase'; 
+import '../../../src/firebase';
+import { getAuth } from 'firebase/auth';
 
 interface Slide {
   id: string;
@@ -38,6 +39,9 @@ export default function StudioScreen() {
   
   const [liveIndex, setLiveIndex] = useState(0);
   const [isLive, setIsLive] = useState(false);
+  
+  // NOVO ESTADO: Para guardar o ID do utilizador atual
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [toast, setToast] = useState<{message: string, type: 'error' | 'success'} | null>(null);
 
@@ -47,6 +51,12 @@ export default function StudioScreen() {
   };
 
   useEffect(() => {
+    // CARREGA O UTILIZADOR ATUAL ASSIM QUE ABRIR A TELA
+    const auth = getAuth();
+    if (auth.currentUser) {
+      setCurrentUserId(auth.currentUser.uid);
+    }
+
     const fetchSession = async () => {
       try {
         const db = getDatabase();
@@ -116,6 +126,10 @@ export default function StudioScreen() {
       return showToast(`O Slide ${emptySlideIndex + 1} está sem pergunta.`);
     }
 
+    if (!currentUserId) {
+        return showToast("Erro: Usuário não identificado.", "error");
+    }
+
     setIsSaving(true);
     try {
       const db = getDatabase();
@@ -125,10 +139,12 @@ export default function StudioScreen() {
         limit: slide.type === 'word_cloud' ? (slide.limit || 3) : 1
       }));
 
+      // AQUI É A CORREÇÃO: Enviamos o userId junto com os outros dados da sessão
       await update(ref(db, `sessions/${sessionId}`), {
         interactions: cleanSlides,
         status: isLive ? 'active' : 'draft',
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        userId: currentUserId 
       });
 
       showToast("Apresentação salva com sucesso! ✓", 'success');
@@ -140,12 +156,16 @@ export default function StudioScreen() {
   };
 
   const handleSaveAndPresent = async () => {
-    if (isMobile) return; // Trava de segurança extra
+    if (isMobile) return; 
 
     const emptySlideIndex = slides.findIndex(s => s.question.trim() === '');
     if (emptySlideIndex !== -1) {
       setActiveIndex(emptySlideIndex);
       return showToast(`O Slide ${emptySlideIndex + 1} está sem pergunta.`);
+    }
+
+    if (!currentUserId) {
+        return showToast("Erro: Usuário não identificado.", "error");
     }
 
     setIsSaving(true);
@@ -157,10 +177,13 @@ export default function StudioScreen() {
         limit: slide.type === 'word_cloud' ? (slide.limit || 3) : 1
       }));
 
+      // AQUI É A CORREÇÃO: Enviamos o userId aqui também
       await update(ref(db, `sessions/${sessionId}`), {
         interactions: cleanSlides,
         currentInteraction: isLive ? liveIndex : 0,
-        status: 'active'
+        status: 'active',
+        updatedAt: Date.now(),
+        userId: currentUserId
       });
 
       setIsSaving(false);
@@ -252,7 +275,6 @@ export default function StudioScreen() {
         </View>
 
         <View style={[styles.actionButtonsGroup, isMobile && { gap: 8 }]}>
-          {/* NO MOBILE, O BOTÃO DE SALVAR PASSA A SER O PRINCIPAL E O DE APRESENTAR SOME */}
           <TouchableOpacity 
             style={[styles.saveButton, isMobile && { paddingHorizontal: 16, backgroundColor: '#c4b5fd', borderColor: '#c4b5fd' }]} 
             onPress={handleSaveOnly} 
