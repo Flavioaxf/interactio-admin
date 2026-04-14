@@ -122,7 +122,7 @@ export default function LiveControlScreen() {
   const router = useRouter(); 
   const sessionId = typeof id === 'string' ? id.toUpperCase() : '';
   
-  const PARTICIPANT_BASE_URL = "172.16.60.74:3000"; // Substitua pelo endereço do seu servidor de participantes
+  const PARTICIPANT_BASE_URL = "https://interactio-web.vercel.app";
   
   const joinUrl = `${PARTICIPANT_BASE_URL}/p/${sessionId}`;
   const qrCodeImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(joinUrl)}&margin=0`;
