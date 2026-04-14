@@ -133,7 +133,11 @@ export default function LiveControlScreen() {
   const [votes, setVotes] = useState<{ [key: string]: number }>({});
   
   const [qnaQuestions, setQnaQuestions] = useState<{id: string, text: string}[]>([]);
+  
+  // 👉 ESTADOS DOS NÚMEROS AQUI
   const [totalParticipants, setTotalParticipants] = useState(0);
+  const [totalVotesCount, setTotalVotesCount] = useState(0); // ADICIONADO!
+  
   const [showQR, setShowQR] = useState(false);
 
   const [isEndSessionModalOpen, setIsEndSessionModalOpen] = useState(false);
@@ -165,11 +169,17 @@ export default function LiveControlScreen() {
         const responses = data.responses ? data.responses[currentIndex] : {};
         const counts: { [key: string]: number } = {};
         const questionsList: {id: string, text: string}[] = [];
-        let participantsCount = 0;
+        
+        // 1. VARIÁVEL PARA O CABEÇALHO (Pessoas Online)
+        const onlineCount = data.participants ? Object.keys(data.participants).length : 0;
+        
+        // 2. VARIÁVEL PARA A PORCENTAGEM (Total de Votos)
+        let totalVotes = 0; 
         
         if (responses) {
           Object.entries(responses).forEach(([partId, val]: [string, any]) => { 
-            participantsCount++;
+            totalVotes++; // Contagem de votos aqui
+            
             if (isWordCloud && Array.isArray(val)) {
               val.forEach(word => { counts[word] = (counts[word] || 0) + 1; });
             } else if (isQnA && Array.isArray(val)) {
@@ -184,7 +194,8 @@ export default function LiveControlScreen() {
         
         setVotes(counts);
         setQnaQuestions(questionsList.reverse()); 
-        setTotalParticipants(participantsCount);
+        setTotalParticipants(onlineCount); 
+        setTotalVotesCount(totalVotes); // AGORA NÃO VAI DAR ERRO!
       } else {
         setErrorMessage("Sessão não encontrada.");
       }
@@ -403,7 +414,10 @@ export default function LiveControlScreen() {
               <View style={styles.barsContainer}>
                 {Array.isArray(currentInteraction?.options) && currentInteraction.options.map((option: string, index: number) => {
                   const count = votes[index] || 0;
-                  const percentage = totalParticipants > 0 ? (count / totalParticipants) : 0;
+                  
+                  // 👉 AQUI A MATEMÁTICA FOI ATUALIZADA
+                  const percentage = totalVotesCount > 0 ? (count / totalVotesCount) : 0;
+                  
                   return (
                     <View key={index} style={styles.barWrapper}>
                       <View style={styles.barLabelGroup}>
@@ -636,7 +650,6 @@ function LoadingOrError({ loading, errorMessage, router }: { loading: boolean, e
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#0f0e17' }, bgGlow: { position: 'absolute', width: 600, height: 600, borderRadius: 300, filter: 'blur(100px)' as any }, loadingRoot: { flex: 1, backgroundColor: '#0f0e17', justifyContent: 'center', alignItems: 'center' }, loadingText: { color: '#8b89a0', marginTop: 24, fontSize: 20, fontWeight: '600' }, backButtonAbsolute: { position: 'absolute', top: 40, left: 40, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
   topBar: { height: 120, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 60, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(15, 14, 23, 0.6)', backdropFilter: 'blur(10px)' as any, zIndex: 50 }, topLeftGroup: { flexDirection: 'row', alignItems: 'center', gap: 20 }, topRightGroup: { flexDirection: 'row', alignItems: 'center', gap: 16 }, backButton: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.05)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' }, logoText: { fontSize: 36, fontWeight: '800', color: '#e8e6f0', letterSpacing: -1 }, highlightText: { color: '#a78bfa' }, pinCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, paddingLeft: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, joinLabel: { color: '#8b89a0', fontSize: 18, marginRight: 16 }, whiteText: { color: '#fff', fontWeight: '700' }, pinBadge: { backgroundColor: '#a78bfa', paddingHorizontal: 24, paddingVertical: 8, borderRadius: 100, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 }, pinText: { color: '#0f0e17', fontSize: 28, fontWeight: '900', letterSpacing: 2 }, qrTriggerButton: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#e8e6f0', justifyContent: 'center', alignItems: 'center', marginLeft: 12, shadowColor: '#fff', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.2, shadowRadius: 10 }, statsCard: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.03)', padding: 12, paddingRight: 24, borderRadius: 100, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, statsIconBox: { width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(167, 139, 250, 0.15)', justifyContent: 'center', alignItems: 'center' }, statsLabel: { color: '#8b89a0', fontSize: 10, fontWeight: '800', letterSpacing: 1 }, statsText: { color: '#e8e6f0', fontSize: 24, fontWeight: '800', lineHeight: 28 },
