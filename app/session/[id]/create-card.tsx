@@ -1,5 +1,5 @@
-import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
-import React, { useState } from 'react';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
+import React, { useState, useEffect } from 'react';
 import { 
   StyleSheet, 
   Text, 
@@ -9,170 +9,194 @@ import {
   ScrollView, 
   ActivityIndicator,
   Platform,
+  Image,
   useWindowDimensions
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getDatabase, ref, update } from 'firebase/database';
-import '../../../src/firebase'; 
+import { getDatabase, ref, set } from 'firebase/database';
+import { getAuth } from 'firebase/auth';
+import '../../../src/firebase';
 
 export default function CreateCardScreen() {
+  const { id } = useLocalSearchParams();
   const router = useRouter();
-  const { id } = useLocalSearchParams(); 
   const sessionId = typeof id === 'string' ? id : id?.[0];
-  
-  // ── RESPONSIVIDADE ──
   const { width: windowWidth } = useWindowDimensions();
   const isMobile = windowWidth < 768;
-  
+
+  const [quickTab, setQuickTab] = useState('multiple_choice');
   const [question, setQuestion] = useState('');
   const [options, setOptions] = useState(['', '']);
-  const [activeTab, setActiveTab] = useState('multiple_choice');
-  const [wordLimit, setWordLimit] = useState<number | 'unlimited'>(3);
-  const [isSaving, setIsSaving] = useState(false);
+  const [limit, setLimit] = useState<number | 'unlimited'>(3);
+  const [isLaunching, setIsLaunching] = useState(false);
+  
+  // Estado para armazenar o ID do utilizador logado
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
-  const addOption = () => { if (options.length < 6) setOptions([...options, '']); };
+  useEffect(() => {
+    // Busca o utilizador assim que a tela abre
+    const auth = getAuth();
+    if (auth.currentUser) {
+      setCurrentUserId(auth.currentUser.uid);
+    }
+  }, []);
+
+  const addOption = () => {
+    if (options.length < 6) setOptions([...options, '']);
+  };
+
   const getOptionLetter = (index: number) => String.fromCharCode(65 + index);
 
-  const handleStartInteraction = async () => {
-    if (question.trim() === '') return alert("Por favor, digite uma pergunta.");
-    
-    setIsSaving(true);
+  const handleLaunch = async () => {
+    if (question.trim() === '') return alert("Por favor, digite o que você quer perguntar.");
+    if (!currentUserId) return alert("Erro: Usuário não identificado.");
+
+    setIsLaunching(true);
     try {
       const db = getDatabase();
-      // Criamos a estrutura correta do slide
-      const interactionData = {
+      const sessionIdStr = typeof id === 'string' ? id : id[0];
+      
+      const newInteraction = {
         id: `slide_${Date.now()}`,
-        type: activeTab,
+        type: quickTab,
         question: question.trim(),
-        options: activeTab === 'multiple_choice' ? options.filter(opt => opt.trim() !== '') : [],
-        limit: activeTab === 'word_cloud' ? wordLimit : 1, 
+        options: quickTab === 'multiple_choice' ? options.filter(opt => opt.trim() !== '') : [],
+        limit: quickTab === 'word_cloud' ? limit : 'unlimited',
         createdAt: Date.now()
       };
 
-      // Como é modo rápido, sobrescrevemos a sessão e ativamos na hora
-      await update(ref(db, `sessions/${sessionId}`), {
-        interactions: [interactionData], 
+      // Usamos 'set' em vez de 'update' porque é a primeira vez que esta sessão é gravada
+      await set(ref(db, `sessions/${sessionIdStr}`), {
+        interactions: [newInteraction],
         currentInteraction: 0,
-        status: 'active',
-        updatedAt: Date.now()
+        status: 'active', // Força o status para Ao Vivo no Dashboard
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        userId: currentUserId // Carimba o dono da sessão para não ficar invisível
       });
 
-      router.push({ pathname: "/session/[id]/live-control", params: { id: sessionId } } as any);
+      setIsLaunching(false);
+      // Vai direto para o telão (Live Control)
+      router.replace(`/session/${sessionIdStr}/live-control` as any);
+      
     } catch (error) {
-      alert("Erro ao iniciar a sessão.");
-      setIsSaving(false);
+      alert("Erro ao lançar a interação. Verifique sua conexão.");
+      setIsLaunching(false);
     }
   };
 
   return (
     <View style={styles.root}>
       <Stack.Screen options={{ headerShown: false }} />
-      <View style={[styles.bgGlow, { top: -150, left: -100, backgroundColor: 'rgba(167, 139, 250, 0.15)' }]} />
-      <View style={[styles.bgGlow, { bottom: -150, right: -100, backgroundColor: 'rgba(56, 189, 248, 0.08)' }]} />
 
-      <ScrollView 
-        contentContainerStyle={[styles.scrollContainer, isMobile && { paddingVertical: 20 }]} 
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.container}>
+      <View style={[styles.topBar, isMobile && { paddingHorizontal: 16 }]}>
+        <View style={styles.topLeft}>
+          {/* Botão de voltar alterado para ir direto para o Dashboard como você pediu */}
+          <TouchableOpacity onPress={() => router.replace('/dashboard')} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={20} color="#e8e6f0" />
+          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Image 
+              source={require('@/assets/images/favicon.png')} 
+              style={{ width: 24, height: 24 }}
+              resizeMode="contain"
+            />
+            <Text style={styles.headerTitle}>Modo Rápido</Text>
+          </View>
+        </View>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollArea} showsVerticalScrollIndicator={false}>
+        <View style={[styles.card, isMobile && { padding: 24, borderRadius: 24 }]}>
           
-          <View style={[styles.header, isMobile && { marginBottom: 24 }]}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-              <Ionicons name="arrow-back" size={20} color="#e8e6f0" />
-              {!isMobile && <Text style={styles.backButtonText}>Voltar</Text>}
+          <View style={[styles.tabsContainer, isMobile && { flexDirection: 'column', gap: 8 }]}>
+            <TouchableOpacity style={[styles.tab, quickTab === 'multiple_choice' && styles.tabActiveMultipleChoice]} onPress={() => setQuickTab('multiple_choice')} activeOpacity={0.7}>
+              <View style={[styles.iconBox, { backgroundColor: quickTab === 'multiple_choice' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="bar-chart" size={16} color={quickTab === 'multiple_choice' ? '#38bdf8' : '#8b89a0'} /></View>
+              <Text style={[styles.tabText, quickTab === 'multiple_choice' && { color: '#e8e6f0' }]}>Múltipla Escolha</Text>
             </TouchableOpacity>
-            
-            <Text style={[styles.headerTitle, isMobile && { fontSize: 24, textAlign: 'center', flex: 1 }]}>Modo Rápido</Text>
-            
-            <View style={[styles.sessionCodeBadge, isMobile && { paddingHorizontal: 12 }]}>
-              {!isMobile && <Text style={styles.sessionCodeLabel}>Sessão:</Text>}
-              <Text style={styles.sessionCodeText}>{sessionId}</Text>
-            </View>
+
+            <TouchableOpacity style={[styles.tab, quickTab === 'word_cloud' && styles.tabActiveWordCloud]} onPress={() => setQuickTab('word_cloud')} activeOpacity={0.7}>
+              <View style={[styles.iconBox, { backgroundColor: quickTab === 'word_cloud' ? 'rgba(244, 114, 182, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="cloud" size={16} color={quickTab === 'word_cloud' ? '#f472b6' : '#8b89a0'} /></View>
+              <Text style={[styles.tabText, quickTab === 'word_cloud' && { color: '#e8e6f0' }]}>Nuvem de Palavras</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.tab, quickTab === 'qna' && styles.tabActiveQA]} onPress={() => setQuickTab('qna')} activeOpacity={0.7}>
+              <View style={[styles.iconBox, { backgroundColor: quickTab === 'qna' ? 'rgba(167, 139, 250, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="chatbubbles" size={16} color={quickTab === 'qna' ? '#a78bfa' : '#8b89a0'} /></View>
+              <Text style={[styles.tabText, quickTab === 'qna' && { color: '#e8e6f0' }]}>Q&A Livre</Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={[styles.card, isMobile && { padding: 24, borderRadius: 24 }]}>
-            
-            <View style={[styles.tabsContainer, isMobile && { flexDirection: 'column' }]}>
-              <TouchableOpacity style={[styles.tab, activeTab === 'multiple_choice' && styles.tabActive]} onPress={() => setActiveTab('multiple_choice')} activeOpacity={0.7}>
-                <View style={[styles.iconBox, { backgroundColor: activeTab === 'multiple_choice' ? 'rgba(56, 189, 248, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="bar-chart" size={16} color={activeTab === 'multiple_choice' ? '#38bdf8' : '#8b89a0'} /></View>
-                <Text style={[styles.tabText, activeTab === 'multiple_choice' && styles.tabTextActive]}>Múltipla Escolha</Text>
-              </TouchableOpacity>
+          <View style={styles.section}>
+            <Text style={styles.label}>{quickTab === 'qna' ? 'TÓPICO OU INSTRUÇÃO' : 'O QUE VOCÊ QUER PERGUNTAR?'}</Text>
+            <TextInput 
+              style={styles.textArea} 
+              placeholder={quickTab === 'qna' ? "Ex: Mande suas dúvidas sobre o projeto..." : "Digite a sua pergunta surpresa..."} 
+              placeholderTextColor="#5a5872" 
+              multiline 
+              value={question} 
+              onChangeText={setQuestion} 
+            />
+          </View>
 
-              <TouchableOpacity style={[styles.tab, activeTab === 'word_cloud' && styles.tabActive]} onPress={() => setActiveTab('word_cloud')} activeOpacity={0.7}>
-                <View style={[styles.iconBox, { backgroundColor: activeTab === 'word_cloud' ? 'rgba(244, 114, 182, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="cloud" size={16} color={activeTab === 'word_cloud' ? '#f472b6' : '#8b89a0'} /></View>
-                <Text style={[styles.tabText, activeTab === 'word_cloud' && styles.tabTextActive]}>Nuvem de Palavras</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={[styles.tab, activeTab === 'q_and_a' && styles.tabActive]} onPress={() => setActiveTab('q_and_a')} activeOpacity={0.7}>
-                <View style={[styles.iconBox, { backgroundColor: activeTab === 'q_and_a' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(255,255,255,0.05)' }]}><Ionicons name="chatbubbles" size={16} color={activeTab === 'q_and_a' ? '#34d399' : '#8b89a0'} /></View>
-                <Text style={[styles.tabText, activeTab === 'q_and_a' && styles.tabTextActive]}>Q&A</Text>
-              </TouchableOpacity>
-            </View>
-
+          {quickTab === 'multiple_choice' && (
             <View style={styles.section}>
-              <Text style={styles.label}>O QUE VOCÊ QUER PERGUNTAR?</Text>
-              <TextInput style={styles.textArea} placeholder="Ex: Qual o maior desafio do nosso setor hoje?" placeholderTextColor="#5a5872" multiline value={question} onChangeText={setQuestion} />
-            </View>
-
-            {activeTab === 'multiple_choice' && (
-              <View style={styles.section}>
-                <Text style={styles.label}>OPÇÕES DE RESPOSTA</Text>
-                {options.map((opt, index) => (
-                  <View key={index} style={styles.optionRow}>
-                    <View style={styles.optionLetterBox}><Text style={styles.optionLetterText}>{getOptionLetter(index)}</Text></View>
-                    <TextInput style={styles.optionInput} placeholder={`Opção ${getOptionLetter(index)}`} placeholderTextColor="#5a5872" value={opt} onChangeText={(text) => { const newOpts = [...options]; newOpts[index] = text; setOptions(newOpts); }} />
-                  </View>
-                ))}
-                {options.length < 6 && (
-                  <TouchableOpacity style={styles.addOptionButton} onPress={addOption} activeOpacity={0.6}>
-                    <Ionicons name="add" size={18} color="#a78bfa" />
-                    <Text style={styles.addOptionText}>Adicionar opção (Máx. 6)</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-
-            {activeTab === 'word_cloud' && (
-              <View style={styles.section}>
-                <Text style={[styles.label, { color: '#f472b6' }]}>RESPOSTAS POR PARTICIPANTE</Text>
-                <View style={[styles.limitRow, isMobile && { flexWrap: 'wrap' }]}>
-                  {[1, 3, 5, 'unlimited'].map((limitValue) => (
-                    <TouchableOpacity 
-                      key={limitValue.toString()}
-                      style={[styles.limitButton, isMobile && { minWidth: '45%' }, wordLimit === limitValue && styles.limitButtonActive]}
-                      onPress={() => setWordLimit(limitValue as any)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.limitButtonText, wordLimit === limitValue && styles.limitButtonTextActive]}>
-                        {limitValue === 'unlimited' ? 'Ilimitado' : limitValue}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+              <Text style={styles.label}>OPÇÕES DE RESPOSTA</Text>
+              {options.map((opt, index) => (
+                <View key={index} style={styles.optionRow}>
+                  <View style={styles.optionLetterBox}><Text style={styles.optionLetterText}>{getOptionLetter(index)}</Text></View>
+                  <TextInput 
+                    style={styles.optionInput} 
+                    placeholder={`Opção ${getOptionLetter(index)}`} 
+                    placeholderTextColor="#5a5872" 
+                    value={opt} 
+                    onChangeText={(text) => { const updatedOptions = [...options]; updatedOptions[index] = text; setOptions(updatedOptions); }} 
+                  />
                 </View>
-              </View>
-            )}
-
-            {activeTab !== 'multiple_choice' && (
-              <View style={[styles.infoBox, isMobile && { flexDirection: 'column', alignItems: 'flex-start', gap: 8 }]}>
-                <Ionicons name="information-circle-outline" size={24} color={activeTab === 'word_cloud' ? '#f472b6' : '#34d399'} />
-                <Text style={styles.infoText}>
-                  {activeTab === 'word_cloud' 
-                    ? "Neste formato, o público envia palavras curtas. Termos repetidos ganharão destaque automático no telão."
-                    : "Neste formato, o público envia perguntas abertas e pode votar nas melhores dúvidas dos colegas."}
-                </Text>
-              </View>
-            )}
-
-            <TouchableOpacity style={styles.startButton} onPress={handleStartInteraction} disabled={isSaving} activeOpacity={0.8}>
-              {isSaving ? <ActivityIndicator color="#0f0e17" /> : (
-                <View style={styles.startButtonInner}>
-                  <Ionicons name="play" size={20} color="#0f0e17" />
-                  <Text style={styles.startButtonText}>Iniciar Interação</Text>
-                </View>
+              ))}
+              {options.length < 6 && (
+                <TouchableOpacity style={styles.addOptionButton} onPress={addOption} activeOpacity={0.6}>
+                  <Ionicons name="add" size={18} color="#a78bfa" />
+                  <Text style={styles.addOptionText}>Adicionar opção (Máx. 6)</Text>
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
+          )}
 
-          </View>
+          {quickTab === 'word_cloud' && (
+            <View style={styles.section}>
+              <Text style={[styles.label, { color: '#f472b6' }]}>RESPOSTAS POR PARTICIPANTE</Text>
+              <View style={[styles.limitRow, isMobile && { flexWrap: 'wrap' }]}>
+                {[1, 3, 5, 'unlimited'].map((limitValue) => {
+                  const isActive = limit === limitValue;
+                  return (
+                    <TouchableOpacity key={limitValue.toString()} style={[styles.limitButton, isMobile && { minWidth: '45%' }, isActive && styles.limitButtonActive]} onPress={() => setLimit(limitValue as any)} activeOpacity={0.7}>
+                      <Text style={[styles.limitButtonText, isActive && styles.limitButtonTextActive]}>{limitValue === 'unlimited' ? 'Ilimitado' : limitValue}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          <TouchableOpacity 
+            style={[
+              styles.launchButton, 
+              quickTab === 'multiple_choice' && { backgroundColor: '#38bdf8', shadowColor: '#38bdf8' },
+              quickTab === 'word_cloud' && { backgroundColor: '#f472b6', shadowColor: '#f472b6' },
+              quickTab === 'qna' && { backgroundColor: '#a78bfa', shadowColor: '#a78bfa' }
+            ]} 
+            onPress={handleLaunch} 
+            disabled={isLaunching} 
+            activeOpacity={0.8}
+          >
+            {isLaunching ? <ActivityIndicator color="#0f0e17" /> : (
+              <View style={styles.launchButtonInner}>
+                <Ionicons name="flash" size={20} color="#0f0e17" />
+                <Text style={styles.launchButtonText}>Lançar no Telão Instantaneamente</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
         </View>
       </ScrollView>
     </View>
@@ -180,48 +204,41 @@ export default function CreateCardScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#0f0e17' }, 
-  bgGlow: { position: 'absolute', width: 500, height: 500, borderRadius: 250, filter: 'blur(120px)' as any, opacity: 0.8 }, 
-  scrollContainer: { alignItems: 'center', paddingVertical: 40, flexGrow: 1, justifyContent: 'center' }, 
-  container: { width: '100%', maxWidth: 850, paddingHorizontal: 24 }, 
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40 }, 
-  backButton: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, 
-  backButtonText: { color: '#e8e6f0', fontSize: 14, fontWeight: '600' }, 
-  headerTitle: { color: '#e8e6f0', fontSize: 32, fontWeight: '900', letterSpacing: -0.5 }, 
-  sessionCodeBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(167, 139, 250, 0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.2)' }, 
-  sessionCodeLabel: { color: '#8b89a0', fontSize: 12, fontWeight: '600', textTransform: 'uppercase' }, 
-  sessionCodeText: { color: '#a78bfa', fontSize: 16, fontWeight: '800', letterSpacing: 1 }, 
+  root: { flex: 1, backgroundColor: '#0f0e17' },
+  topBar: { height: 80, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 32, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)', backgroundColor: '#13121d', zIndex: 10 }, 
+  topLeft: { flexDirection: 'row', alignItems: 'center', gap: 16 }, 
+  backButton: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.05)', justifyContent: 'center', alignItems: 'center' }, 
+  headerTitle: { color: '#e8e6f0', fontSize: 18, fontWeight: '800' },
   
-  card: { backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.4, shadowRadius: 30, backdropFilter: 'blur(20px)' as any }, 
+  scrollArea: { padding: 40, alignItems: 'center', flexGrow: 1, justifyContent: 'center' }, 
+  card: { width: '100%', maxWidth: 800, backgroundColor: 'rgba(26, 25, 36, 0.8)', borderRadius: 32, padding: 40, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.4, shadowRadius: 30, backdropFilter: 'blur(20px)' as any },
   
   tabsContainer: { flexDirection: 'row', gap: 12, marginBottom: 40, flexWrap: 'wrap' }, 
   tab: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.02)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' }, 
-  tabActive: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(167, 139, 250, 0.3)' }, 
+  tabActiveMultipleChoice: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(56, 189, 248, 0.3)' }, 
+  tabActiveWordCloud: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(244, 114, 182, 0.3)' }, 
+  tabActiveQA: { backgroundColor: 'rgba(255,255,255,0.05)', borderColor: 'rgba(167, 139, 250, 0.3)' }, 
   iconBox: { width: 32, height: 32, borderRadius: 8, justifyContent: 'center', alignItems: 'center' }, 
-  tabText: { color: '#8b89a0', fontWeight: '600', fontSize: 15 }, 
-  tabTextActive: { color: '#e8e6f0', fontWeight: '800' }, 
+  tabText: { color: '#8b89a0', fontWeight: '700', fontSize: 14 }, 
   
   section: { marginBottom: 32 }, 
   label: { color: '#a78bfa', fontSize: 12, fontWeight: '800', letterSpacing: 1.5, marginBottom: 16 }, 
-  textArea: { backgroundColor: '#0f0e17', color: '#e8e6f0', fontSize: 18, borderRadius: 16, padding: 24, minHeight: 120, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', textAlignVertical: 'top', ...(Platform.OS === 'web' && { outlineStyle: 'none' } as any) }, 
+  textArea: { backgroundColor: '#0f0e17', color: '#e8e6f0', fontSize: 18, borderRadius: 16, padding: 24, minHeight: 120, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', textAlignVertical: 'top', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, 
   
   optionRow: { flexDirection: 'row', marginBottom: 12 }, 
-  optionLetterBox: { backgroundColor: 'rgba(167, 139, 250, 0.1)', width: 56, height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.15)' }, 
-  optionLetterText: { color: '#a78bfa', fontSize: 18, fontWeight: '800' }, 
-  optionInput: { flex: 1, backgroundColor: '#0f0e17', color: '#e8e6f0', height: 56, borderRadius: 16, paddingHorizontal: 20, fontSize: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...(Platform.OS === 'web' && { outlineStyle: 'none' } as any) }, 
-  addOptionButton: { flexDirection: 'row', gap: 8, borderWidth: 1, borderColor: 'rgba(167, 139, 250, 0.3)', borderStyle: 'dashed', borderRadius: 16, height: 56, justifyContent: 'center', alignItems: 'center', marginTop: 8 }, 
-  addOptionText: { color: '#a78bfa', fontWeight: '700', fontSize: 15 }, 
+  optionLetterBox: { backgroundColor: 'rgba(56, 189, 248, 0.1)', width: 56, height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 12, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.15)' }, 
+  optionLetterText: { color: '#38bdf8', fontSize: 18, fontWeight: '800' }, 
+  optionInput: { flex: 1, backgroundColor: '#0f0e17', color: '#e8e6f0', height: 56, borderRadius: 16, paddingHorizontal: 20, fontSize: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }, 
+  addOptionButton: { flexDirection: 'row', gap: 8, borderWidth: 1, borderColor: 'rgba(56, 189, 248, 0.3)', borderStyle: 'dashed', borderRadius: 16, height: 56, justifyContent: 'center', alignItems: 'center', marginTop: 8 }, 
+  addOptionText: { color: '#38bdf8', fontWeight: '700', fontSize: 15 }, 
   
-  infoBox: { flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: 'rgba(255,255,255,0.02)', padding: 24, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', marginBottom: 32 }, 
-  infoText: { flex: 1, color: '#8b89a0', fontSize: 15, lineHeight: 24 },
-  
-  startButton: { backgroundColor: '#a78bfa', paddingVertical: 20, borderRadius: 16, shadowColor: '#a78bfa', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 20, marginTop: 10 }, 
-  startButtonInner: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 }, 
-  startButtonText: { color: '#0f0e17', fontSize: 18, fontWeight: '900', letterSpacing: 0.5 },
-  
-  limitRow: { flexDirection: 'row', gap: 12 },
-  limitButton: { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.02)', alignItems: 'center' },
-  limitButtonActive: { borderColor: 'rgba(244, 114, 182, 0.4)', backgroundColor: 'rgba(244, 114, 182, 0.1)' },
-  limitButtonText: { color: '#8b89a0', fontWeight: '700', fontSize: 15 },
-  limitButtonTextActive: { color: '#f472b6', fontWeight: '900' }
+  limitRow: { flexDirection: 'row', gap: 12 }, 
+  limitButton: { flex: 1, paddingVertical: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', backgroundColor: 'rgba(255,255,255,0.02)', alignItems: 'center' }, 
+  limitButtonActive: { borderColor: 'rgba(244, 114, 182, 0.4)', backgroundColor: 'rgba(244, 114, 182, 0.1)' }, 
+  limitButtonText: { color: '#8b89a0', fontWeight: '700', fontSize: 15 }, 
+  limitButtonTextActive: { color: '#f472b6', fontWeight: '900' },
+
+  launchButton: { paddingVertical: 20, borderRadius: 16, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 15, marginTop: 16 }, 
+  launchButtonInner: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 }, 
+  launchButtonText: { color: '#0f0e17', fontSize: 18, fontWeight: '900', letterSpacing: 0.5 }
 });
